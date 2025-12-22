@@ -1,4 +1,4 @@
-# Upload command - streams files to server with progress tracking
+# Upload command - uploads files to server
 
 import os
 import typer
@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Optional
 import httpx
 from rich.console import Console
-from rich.progress import Progress, BarColumn, FileSizeColumn, TimeRemainingColumn, TransferSpeedColumn
 
 console = Console()
 
@@ -37,29 +36,12 @@ def upload_file(
 
     console.print(f"[blue]📤 Uploading:[/blue] {filename}")
     console.print(f"[blue]📊 Size:[/blue] {file_size:,} bytes")
-
-    # File size warnings
-    if file_size > 10 * 1024 * 1024 * 1024:  # 10GB
-        console.print(f"[yellow]⚠️  Large file detected (>10GB). Upload may take time.[/yellow]")
-    elif file_size > 1024 * 1024 * 1024:  # 1GB
-        console.print(f"[yellow]📹 Video file detected (>1GB). Ensuring stable connection...[/yellow]")
-
     if description:
         console.print(f"[blue]📝 Description:[/blue] {description}")
 
+    console.print(f"[yellow]🔗 Server URL: {server_url}/api/upload[/yellow]")
+
     try:
-        # Upload with progress tracking
-        with Progress(
-            BarColumn(),
-            "[progress.percentage]{task.percentage:>3.0f}%",
-            FileSizeColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-            console=console
-        ) as progress:
-
-            task = progress.add_task("Uploading...", total=file_size)
-
             with open(file_path, 'rb') as f:
                 # Prepare multipart form data
                 files = {'file': (filename, f, 'application/octet-stream')}
@@ -67,23 +49,26 @@ def upload_file(
                 if description:
                     data['description'] = description
 
-                # Upload using httpx for better streaming
-                # Timeout: 2 hours for large video files (7200 seconds)
-                with httpx.Client(timeout=7200.0) as client:
-                    with client.stream(
-                        'POST',
+                # Upload using httpx (modern async HTTP client)
+                console.print(f"[yellow]📡 Uploading {file_size:,} bytes to server...[/yellow]")
+                console.print(f"[blue]⏳ Please wait, this may take a few minutes for large files...[/blue]")
+
+                with httpx.Client(timeout=600.0) as client:  # 10 minute timeout for large files
+                    # Use explicit headers to avoid streaming issues
+                    headers = {"Accept": "application/json"}
+                    response = client.post(
                         f"{server_url}/api/upload",
                         files=files,
-                        data=data
-                    ) as response:
-                        response.raise_for_status()
+                        data=data,
+                        headers=headers
+                    )
 
-                        # Read response (though we don't need to track upload progress
-                        # since we're streaming from file)
-                        result = response.json()
+                    console.print(f"[yellow]📡 Server responded with status: {response.status_code}[/yellow]")
 
-                        # Mark progress as complete
-                        progress.update(task, completed=file_size)
+                    response.raise_for_status()
+
+                    # Parse response
+                    result = response.json()
 
         # Display success
         file_info = result['file']
@@ -93,8 +78,8 @@ def upload_file(
         console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
 
     except httpx.TimeoutException:
-        console.print("[red]❌ Upload timeout (2 hour limit reached)[/red]")
-        console.print("[yellow]💡 Try uploading smaller chunks or check network connection[/yellow]")
+        console.print("[red]❌ Upload timeout - file too large or network slow[/red]")
+        console.print(f"[red]🔍 Timeout after 600 seconds (10 minutes)[/red]")
         raise typer.Exit(1)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 413:
