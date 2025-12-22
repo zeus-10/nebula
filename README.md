@@ -81,7 +81,7 @@ This project uses a GitOps workflow. You push code to a bare repository on the s
 │   └── hooks/
 │       └── post-receive         # Script: Checkout code -> Rebuild Docker
 │
-├── nebula-live/                 # [Runtime] The Active Application
+├── server/                       # [Runtime] The Active Application
 │   ├── docker-compose.yml       # Infrastructure Definition
 │   ├── .env                     # Secrets (Not in Git)
 │   ├── backend/                 # Source Code
@@ -191,7 +191,61 @@ services:
       - S3_BUCKET=nebula-uploads
 ```
 
-## 5. Implementation Phases
+## 5. Database Setup & Migrations
+
+### Environment Variables
+
+Create a `.env` file in the `server/` directory with your configuration:
+
+```env
+# Security
+SECRET_KEY=your-secret-key-here
+
+# Database
+DATABASE_URL=postgresql://nebula:nebula_secure@db:5432/nebula_meta
+
+# MinIO/S3
+S3_ENDPOINT=http://s3:9000
+S3_ACCESS_KEY=admin
+S3_SECRET_KEY=nebula_secure
+S3_BUCKET=nebula-uploads
+
+# Redis
+REDIS_URL=redis://queue:6379/0
+```
+
+### Database Migrations (Alembic)
+
+After starting the containers, set up the database schema:
+
+```bash
+# Enter the API container
+docker exec -it nebula-api bash
+
+# Initialize Alembic (if not done)
+alembic init alembic
+
+# Configure alembic.ini with your database URL
+# (Already done in our setup)
+
+# Generate initial migration
+alembic revision --autogenerate -m "Initial schema"
+
+# Apply migration to create tables
+alembic upgrade head
+
+# Check current migration status
+alembic current
+```
+
+**What this creates:**
+- `files` table for storing upload metadata
+- Migration tracking in `alembic_version` table
+- Version-controlled schema changes
+
+---
+
+## 7. Implementation Phases
 
 ### 🟦 Phase 1: Connectivity (The Handshake)
 
