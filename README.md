@@ -547,6 +547,6 @@ Built with:
 
 **Made with ❤️ for personal cloud freedom**
 
-[Report Bug](https://github.com/yourusername/nebula/issues) · [Request Feature](https://github.com/yourusername/nebula/issues)
+[Report Bug](https://github.com/zeus-10/nebula/issues) · [Request Feature](https://github.com/zeus-10/nebula/issues)
 
 </div>
