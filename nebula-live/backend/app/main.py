@@ -1,9 +1,12 @@
 # FastAPI application entrypoint - initializes app, mounts routers, starts server
 
 from fastapi import FastAPI
+from app.api import ping
 import os
 
 app = FastAPI(title="Nebula Cloud")
+
+app.include_router(ping.router)
 
 @app.get("/")
 def read_root():
