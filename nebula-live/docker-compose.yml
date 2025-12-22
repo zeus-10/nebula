@@ -1,0 +1,2 @@
+# Master infrastructure definition - orchestrates all services (MinIO, PostgreSQL, Redis, API, Worker)
+

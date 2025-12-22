@@ -1,0 +1,2 @@
+# Python dependencies (FastAPI, SQLAlchemy, MinIO client, Celery, etc.)
+

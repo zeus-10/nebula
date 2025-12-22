@@ -1,0 +1,25 @@
+# Nebula project root .gitignore
+
+# Ignore everything except what we want to track
+# (Adjust as needed based on what you want in the root repo)
+
+# Data directories
+data/
+
+# Environment files
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
