@@ -28,29 +28,34 @@ def download_file(
             # Get file metadata
             info_response = client.get(f"{server_url}/api/files/{file_id}")
             info_response.raise_for_status()
-            file_info = info_response.json()
+            result = info_response.json()
+            file_info = result['file']
 
         console.print(f"[blue]📄 File:[/blue] {file_info['filename']}")
         console.print(f"[blue]📊 Size:[/blue] {file_info['size']:,} bytes")
         console.print(f"[blue]🏷️  Type:[/blue] {file_info['mime_type']}")
-        if file_info['description']:
+        if file_info.get('description'):
             console.print(f"[blue]📝 Description:[/blue] {file_info['description']}")
 
         # Determine output path
         if output_path:
             output_file = Path(output_path)
         else:
-            output_file = Path(file_info['filename'])
+            # Default download location
+            default_dir = Path("/mnt/c/Users/abhin/OneDrive/Desktop/nebula")
+            default_dir.mkdir(parents=True, exist_ok=True)
+            output_file = default_dir / file_info['filename']
 
         # Check if output file already exists
         if output_file.exists():
             console.print(f"[yellow]⚠️  File '{output_file}' already exists. Overwrite? (y/N): [/yellow]", end="")
-            if input().lower() != 'y':
+            response = input().strip().lower()
+            if response != 'y' and response != 'yes':
                 console.print("[yellow]Download cancelled.[/yellow]")
                 return
 
         # Download with progress tracking
-        console.print(f"[yellow]🚀 Downloading to {output_file}...[/yellow]")
+        console.print(f"[yellow]🚀 Downloading to {output_file.absolute()}...[/yellow]")
 
         with httpx.Client(timeout=7200.0) as client:  # 2 hour timeout for large files
             with client.stream(
@@ -85,7 +90,7 @@ def download_file(
         if output_file.exists():
             actual_size = output_file.stat().st_size
             if actual_size == file_info['size']:
-                console.print(f"[green]✅ Download complete![/green] Saved to {output_file}")
+                console.print(f"[green]✅ Download complete![/green] Saved to {output_file.absolute()}")
                 console.print(f"[green]📁 File size:[/green] {actual_size:,} bytes")
             else:
                 console.print(f"[red]❌ Download incomplete! Expected {file_info['size']:,} bytes, got {actual_size:,} bytes[/red]")

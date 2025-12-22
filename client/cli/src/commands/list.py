@@ -27,7 +27,8 @@ def list_files(
             )
             response.raise_for_status()
 
-        files = response.json()
+        result = response.json()
+        files = result.get('files', [])
 
         if not files:
             console.print("[yellow]📂 No files found.[/yellow]")
@@ -48,11 +49,11 @@ def list_files(
             if size_bytes < 1024:
                 size_str = f"{size_bytes} B"
             elif size_bytes < 1024 * 1024:
-                size_str = ".1f"
+                size_str = f"{size_bytes / 1024:.1f} KB"
             elif size_bytes < 1024 * 1024 * 1024:
-                size_str = ".1f"
+                size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
             else:
-                size_str = ".1f"
+                size_str = f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
             # Format upload date (remove time part for display)
             upload_date = file['upload_date'][:10] if file['upload_date'] else "Unknown"
@@ -78,7 +79,8 @@ def list_files(
             )
 
         console.print(table)
-        console.print(f"[green]✅ Found {len(files)} files[/green]")
+        total_count = result.get('count', len(files))
+        console.print(f"[green]✅ Found {len(files)} files (total: {total_count})[/green]")
 
     except httpx.TimeoutException:
         console.print("[red]❌ Request timeout - server may be slow or unreachable[/red]")
