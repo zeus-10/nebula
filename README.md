@@ -1,293 +1,552 @@
-# Nebula: Distributed Private Cloud & Streaming Engine
+# 🌌 Nebula: Distributed Private Cloud & Streaming Engine
 
-**Version:** 1.0.0-alpha  
-**Status:** 🏗️ In Development  
-**Architecture:** Microservices (Client-Server)  
-**Infrastructure:** Self-Hosted Bare Metal
+<div align="center">
 
-## 1. Executive Summary
+**Your Personal Netflix + Dropbox on an Old Laptop**
 
-Nebula is a private, distributed cloud platform designed to run on a single "waste" laptop (Intel i5 11th Gen). It decouples storage, compute, and state into isolated microservices, creating a robust "Personal AWS."
+[![Status](https://img.shields.io/badge/status-operational-green)]()
+[![Version](https://img.shields.io/badge/version-1.0.0--alpha-blue)]()
+[![License](https://img.shields.io/badge/license-MIT-orange)]()
+
+</div>
+
+---
+
+## 📋 Table of Contents
+
+- [Executive Summary](#-executive-summary)
+- [Features](#-features-implemented)
+- [Quick Start](#-quick-start)
+- [Architecture](#-architecture)
+- [Project Structure](#-project-structure)
+- [CLI Commands](#-cli-commands)
+- [Common Issues & Solutions](#-common-issues--solutions)
+- [Development](#-development)
+
+---
+
+## 🎯 Executive Summary
+
+Nebula transforms a single "waste" laptop into a **private cloud platform** capable of storing, streaming, and processing media files. It's your personal **Netflix + Dropbox**, running entirely on hardware you control.
 
 ### Core Capabilities
 
-- **Data Sovereignty:** A private S3-compatible object storage layer (MinIO) that abstracts the physical filesystem.
-- **Adaptive Streaming:** A Netflix-style video pipeline supporting HTTP Byte-Range requests (seeking/scrubbing).
-- **Zero-Trust Security:** A private mesh VPN (Tailscale) that exposes no public ports.
-- **Resilient Processing:** An asynchronous worker queue for background media transcoding (FFmpeg).
-- **Persistent Auth:** Dual-token JWT system (Access + Refresh) to prevent "login fatigue."
+- ☁️ **Object Storage** - S3-compatible storage layer (MinIO) for unlimited file types
+- 🎬 **Video Streaming** - HTTP byte-range streaming with seeking support (like Netflix)
+- 🔒 **Zero-Trust Security** - Tailscale VPN mesh network (no public ports exposed)
+- ⚡ **Async Processing** - Background transcoding pipeline (Celery + Redis + FFmpeg)
+- 🚀 **CLI Tools** - Beautiful terminal interface for all operations
 
-## 2. System Architecture
+---
 
-The system uses a Microservices Architecture. Services communicate over an internal Docker network, while the client connects via a secure Tailscale tunnel.
+## ✨ Features Implemented
 
-### A. High-Level Architecture Diagram
+### ✅ Phase 1: Connectivity ✓
+- **`nebula ping`** - Server health check
+- **`nebula status`** - Detailed system health dashboard
 
-```mermaid
-graph TD
-    subgraph Client_Node [Client: New Laptop]
-        CLI[Nebula CLI]
-        VLC[VLC / MPV Player]
-    end
+### ✅ Phase 2: Storage ✓
+- **`nebula upload <file>`** - Upload files of any size (curl-based, WSL-compatible)
+- **`nebula list`** - List all files with metadata in beautiful tables
+- **`nebula download <id>`** - Download files with progress bars
+- **Direct MinIO integration** - Streaming uploads/downloads
 
-    subgraph Network [Secure Tunnel]
-        TS[Tailscale VPN]
-    end
+### ✅ Phase 3: Media Streaming ✓
+- **`nebula play <id>`** - Stream videos directly to VLC/mpv
+- **Byte-Range Support** - HTTP 206 Partial Content for seeking
+- **Instant Seeking** - Jump to any part of a video without full download
 
-    subgraph Server_Node [Server: Old Laptop]
-        direction TB
-        Proxy[FastAPI Gateway]
-        
-        subgraph Data_Layer
-            MinIO[(MinIO Storage)]
-            Postgres[(PostgreSQL DB)]
-        end
-        
-        subgraph Async_Layer
-            Redis[[Redis Queue]]
-            Celery[Celery Worker]
-            FFmpeg[FFmpeg Process]
-        end
-    end
+### 🚧 Phase 4: Transcoding (In Progress)
+- **Celery Worker** - Background job queue configured
+- **Redis Queue** - Job distribution ready
+- **FFmpeg Integration** - Planned for multi-quality video output
 
-    %% Data Flow
-    CLI -->|HTTP Upload| TS
-    TS -->|Forward Request| Proxy
-    Proxy -->|Stream Data| MinIO
-    Proxy -->|Save Metadata| Postgres
-    Proxy -->|Push Job| Redis
-    Redis -->|Pull Task| Celery
-    Celery -->|Transcode| FFmpeg
-    Proxy -->|Stream Video| VLC
-```
+---
 
-### B. Service Roles
+## 🚀 Quick Start
 
-| Service | Container Name | Role | Tech Stack |
-|---------|---------------|------|------------|
-| Gateway | nebula-api | Entry point. Handles Auth, Uploads & Streaming. | FastAPI (Python) |
-| Storage | nebula-s3 | Stores raw binary files (S3 Protocol). | MinIO |
-| State | nebula-db | Stores User data, File metadata, and Job status. | PostgreSQL 15 |
-| Queue | nebula-queue | Holds background jobs (transcoding tasks). | Redis 7 |
-| Worker | nebula-worker | Executes CPU-heavy tasks (FFmpeg) asynchronously. | Celery |
+### Server Setup (Old Laptop)
 
-## 3. Directory Structure
+```bash
+# 1. Clone repository
+git clone <repo-url> ~/nebula
+cd ~/nebula/server
 
-This project uses a GitOps workflow. You push code to a bare repository on the server, which automatically builds the live application via a post-receive hook.
-
-```
-/home/nebula_user/
-├── nebula.git/                  # [Bare Repo] Receives 'git push'
-│   └── hooks/
-│       └── post-receive         # Script: Checkout code -> Rebuild Docker
-│
-├── server/                       # [Runtime] The Active Application
-│   ├── docker-compose.yml       # Infrastructure Definition
-│   ├── .env                     # Secrets (Not in Git)
-│   ├── backend/                 # Source Code
-│   │   ├── Dockerfile
-│   │   ├── app/                 # Python Package
-│   │   │   ├── main.py          # API Gateway Entrypoint
-│   │   │   ├── core/            # Config & Security
-│   │   │   ├── api/             # HTTP Routes (Upload/Stream)
-│   │   │   └── services/        # Business Logic (S3/DB interactions)
-│   │   └── worker.py            # Celery Entrypoint
-│   └── data/                    # [Persistence Layer] (Mapped to SSD)
-│       ├── minio_storage/       # <--- Actual Movie Files
-│       ├── postgres_data/       # <--- DB Tables
-│       └── redis_data/          # <--- Queue Persistence
-```
-
-## 4. Master Infrastructure (docker-compose.yml)
-
-Use this file to spin up the entire stack on the server.
-
-```yaml
-version: '3.8'
-
-services:
-  # --- Storage Layer ---
-  s3:
-    image: minio/minio:RELEASE.2023-09-30T07-02-29Z
-    container_name: nebula-s3
-    restart: always
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"  # API Port
-      - "9001:9001"  # Console Port
-    environment:
-      - MINIO_ROOT_USER=admin
-      - MINIO_ROOT_PASSWORD=nebula_secure
-    volumes:
-      - ./data/minio_storage:/data
-
-  # --- State Layer ---
-  db:
-    image: postgres:15-alpine
-    container_name: nebula-db
-    restart: always
-    environment:
-      - POSTGRES_USER=nebula
-      - POSTGRES_PASSWORD=nebula_secure
-      - POSTGRES_DB=nebula_meta
-    volumes:
-      - ./data/postgres_data:/var/lib/postgresql/data
-
-  # --- Queue Layer ---
-  queue:
-    image: redis:7-alpine
-    container_name: nebula-queue
-    restart: always
-    ports:
-      - "6379:6379"
-
-  # --- API Gateway ---
-  api:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: nebula-api
-    restart: always
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-      - /sys/class/power_supply:/host_power:ro  # Battery Monitoring
-    depends_on:
-      - db
-      - queue
-      - s3
-    environment:
-      - DATABASE_URL=postgresql://nebula:nebula_secure@db:5432/nebula_meta
-      - REDIS_URL=redis://queue:6379/0
-      - S3_ENDPOINT=http://s3:9000
-      - S3_ACCESS_KEY=admin
-      - S3_SECRET_KEY=nebula_secure
-      - S3_BUCKET=nebula-uploads
-      - ACCESS_TOKEN_EXPIRE_MINUTES=15
-      - REFRESH_TOKEN_EXPIRE_DAYS=30
-
-  # --- Async Worker ---
-  worker:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: nebula-worker
-    restart: always
-    command: celery -A app.worker.celery_app worker --loglevel=info
-    devices:
-       - /dev/dri:/dev/dri # Hardware Transcoding (Intel QuickSync)
-    depends_on:
-      - db
-      - queue
-      - s3
-    environment:
-      # (Same Env Vars as API)
-      - DATABASE_URL=postgresql://nebula:nebula_secure@db:5432/nebula_meta
-      - REDIS_URL=redis://queue:6379/0
-      - S3_ENDPOINT=http://s3:9000
-      - S3_ACCESS_KEY=admin
-      - S3_SECRET_KEY=nebula_secure
-      - S3_BUCKET=nebula-uploads
-```
-
-## 5. Database Setup & Migrations
-
-### File Size Limits
-
-Nebula Cloud supports large video file uploads:
-
-- **Maximum File Size**: Unlimited (theoretical MinIO limit)
-- **Practical Limits**:
-  - Network speed and stability
-  - Client timeout: 2 hours (CLI)
-  - Server resources (RAM/disk)
-- **Recommended**: Up to 10GB for most use cases
-- **Supported Formats**: Any file type (videos, images, documents)
-- **Upload Method**: Streaming (memory efficient, handles large files)
-- **Progress Tracking**: Real-time progress bars (CLI)
-- **Resume Support**: Not yet implemented (future phase)
-
-### Environment Variables
-
-Create a `.env` file in the `server/` directory with your configuration:
-
-```env
-# Security
+# 2. Create .env file
+cat > .env << EOF
 SECRET_KEY=your-secret-key-here
-
-# Database
 DATABASE_URL=postgresql://nebula:nebula_secure@db:5432/nebula_meta
-
-# MinIO/S3
 S3_ENDPOINT=http://s3:9000
 S3_ACCESS_KEY=admin
 S3_SECRET_KEY=nebula_secure
 S3_BUCKET=nebula-uploads
-
-# Redis
 REDIS_URL=redis://queue:6379/0
+EOF
+
+# 3. Start all services
+docker-compose up -d
+
+# 4. Initialize database
+docker exec -it nebula-api bash
+alembic upgrade head
+exit
 ```
 
-### Database Migrations (Alembic)
-
-After starting the containers, set up the database schema:
+### Client Setup (New Laptop)
 
 ```bash
-# Enter the API container
-docker exec -it nebula-api bash
+# 1. Navigate to CLI directory
+cd nebula/client/cli
 
-# Initialize Alembic (if not done)
-alembic init alembic
+# 2. Create virtual environment
+python3 -m venv ../.venv
+source ../.venv/bin/activate
 
-# Configure alembic.ini with your database URL
-# (Already done in our setup)
+# 3. Install CLI
+pip install -e .
 
-# Generate initial migration
-alembic revision --autogenerate -m "Initial schema"
+# 4. Configure server URL
+echo "NEBULA_SERVER_URL=http://YOUR_TAILSCALE_IP:8000" > .env.client
 
-# Apply migration to create tables
-alembic upgrade head
-
-# Check current migration status
-alembic current
+# 5. Test connection
+nebula ping
 ```
-
-**What this creates:**
-- `files` table for storing upload metadata
-- Migration tracking in `alembic_version` table
-- Version-controlled schema changes
 
 ---
 
-## 7. Implementation Phases
+## 🏗️ Architecture
 
-### 🟦 Phase 1: Connectivity (The Handshake)
+### High-Level Architecture
 
-**Goal:** Verify secure communication between Client and Server.
+```mermaid
+graph TB
+    subgraph Client["🖥️ Client (WSL/Windows)"]
+        CLI[Nebula CLI]
+        VLC[VLC/mpv Player]
+    end
+    
+    subgraph Network["🌐 Tailscale VPN"]
+        TS[Encrypted Tunnel]
+    end
+    
+    subgraph Server["🖧 Server (Old Laptop)"]
+        subgraph API["API Layer"]
+            FastAPI[FastAPI Gateway<br/>Port 8000]
+        end
+        
+        subgraph Storage["Storage Layer"]
+            MinIO[(MinIO S3<br/>Port 9000)]
+            Postgres[(PostgreSQL 15<br/>Port 5432)]
+        end
+        
+        subgraph Worker["Worker Layer"]
+            Redis[[Redis Queue<br/>Port 6379]]
+            Celery[Celery Worker]
+            FFmpeg[FFmpeg]
+        end
+    end
+    
+    CLI -->|HTTP/HTTPS| TS
+    VLC -->|HTTP Stream| TS
+    TS -->|Forward| FastAPI
+    
+    FastAPI -->|Stream| MinIO
+    FastAPI -->|Metadata| Postgres
+    FastAPI -->|Queue Jobs| Redis
+    
+    Redis -->|Pull Tasks| Celery
+    Celery -->|Process| FFmpeg
+    Celery -->|Store Results| MinIO
+    Celery -->|Update Status| Postgres
+```
 
-**Deliverable:** A `nebula ping` command returning "Pong" from the remote server.
+### Data Flow: Upload
 
-### 🟨 Phase 2: Storage (The Vault)
+```
+1. User: nebula upload movie.mp4
+   ↓
+2. CLI: HTTP POST (curl --no-buffer)
+   ↓
+3. FastAPI: Receives multipart/form-data
+   ↓
+4. File Service: Streams to MinIO
+   ↓
+5. MinIO: Stores file in S3 bucket
+   ↓
+6. PostgreSQL: Saves metadata (filename, size, path, etc.)
+   ↓
+7. Response: Returns file ID to user
+```
 
-**Goal:** Enable file ingestion and retrieval.
+### Data Flow: Streaming
 
-**Deliverable:**
-- `nebula upload <file>`: Streams data to MinIO.
-- `nebula ls`: Lists files stored in the cloud.
+```
+1. User: nebula play 67
+   ↓
+2. CLI: Launches VLC with stream URL
+   ↓
+3. VLC: HTTP GET /api/files/67/stream
+   ↓
+4. FastAPI: Parses Range header (e.g., "bytes=50000000-60000000")
+   ↓
+5. MinIO: Reads only requested bytes
+   ↓
+6. FastAPI: Returns HTTP 206 Partial Content
+   ↓
+7. VLC: Plays video chunk, can seek instantly
+```
 
-### 🟧 Phase 3: Media (The Cinema)
+### Service Communication
 
-**Goal:** Enable instant video playback.
+| Service | Port | Purpose | Protocol |
+|---------|------|---------|----------|
+| **nebula-api** | 8000 | HTTP API Gateway | FastAPI/HTTP |
+| **nebula-s3** | 9000 | Object Storage | S3 API |
+| **nebula-db** | 5432 | Relational Database | PostgreSQL |
+| **nebula-queue** | 6379 | Job Queue | Redis Protocol |
+| **nebula-worker** | - | Background Tasks | Internal (Celery) |
 
-**Tech:** HTTP Byte-Range Requests (Status 206).
+---
 
-**Deliverable:** `nebula play <movie>` spawns a local VLC window streaming from the server.
+## 📁 Project Structure
 
-### 🟥 Phase 4: Compute (The Factory)
+```
+nebula/
+├── 📂 client/
+│   └── 📂 cli/                          # Python CLI Client
+│       ├── 📂 src/
+│       │   ├── main.py                  # CLI entry point (Typer)
+│       │   └── 📂 commands/
+│       │       ├── upload.py            # ✅ Upload with curl
+│       │       ├── download.py          # ✅ Download with progress
+│       │       ├── list.py              # ✅ List files (Rich tables)
+│       │       ├── play.py              # ✅ Stream to VLC
+│       │       └── status.py            # ✅ System health
+│       ├── pyproject.toml               # Package config
+│       └── .env.client                  # Client config (gitignored)
+│
+├── 📂 server/
+│   └── 📂 backend/
+│       ├── 📂 app/
+│       │   ├── main.py                  # FastAPI app & routers
+│       │   ├── 📂 api/                  # HTTP Endpoints
+│       │   │   ├── upload.py            # POST /api/upload
+│       │   │   ├── files.py             # GET /api/files
+│       │   │   ├── stream.py            # GET /api/files/{id}/stream
+│       │   │   └── ping.py              # GET /health, /ping
+│       │   ├── 📂 core/                 # Core Services
+│       │   │   ├── config.py            # Environment config
+│       │   │   ├── database.py          # SQLAlchemy setup
+│       │   │   ├── s3_client.py         # MinIO wrapper
+│       │   │   └── security.py          # JWT (future)
+│       │   ├── 📂 models/               # Database Models
+│       │   │   ├── file.py              # File metadata model
+│       │   │   ├── user.py              # User model (future)
+│       │   │   └── job.py               # Transcode job model
+│       │   ├── 📂 services/             # Business Logic
+│       │   │   ├── file_service.py      # Upload/download logic
+│       │   │   ├── metadata_service.py  # File metadata
+│       │   │   └── transcode_service.py # FFmpeg (future)
+│       │   └── worker.py                # Celery app
+│       ├── Dockerfile                   # Container definition
+│       ├── requirements.txt             # Python dependencies
+│       └── alembic.ini                  # Database migrations
+│   ├── docker-compose.yml               # 5-service orchestration
+│   ├── .env                             # Server secrets (gitignored)
+│   └── 📂 data/                         # Persistent volumes
+│       ├── minio_storage/               # Actual files
+│       ├── postgres_data/               # Database files
+│       └── redis_data/                  # Queue persistence
+│
+└── 📂 nebula.git/                       # GitOps bare repo
+    └── 📂 hooks/
+        └── post-receive                 # Auto-deploy script
+```
 
-**Goal:** Automated video optimization.
+---
 
-**Tech:** Celery + Redis + FFmpeg.
+## 💻 CLI Commands
 
-**Deliverable:** Uploading a raw `.mkv` triggers a background job that converts it to a web-optimized `.mp4`.
+### Basic Commands
+
+```bash
+# Test connectivity
+nebula ping
+
+# Upload a file
+nebula upload "/path/to/file.mp4" --description "My video"
+
+# List all files
+nebula list
+
+# List with pagination
+nebula list --limit 20 --skip 0
+
+# Download a file
+nebula download 67
+
+# Download to specific location
+nebula download 67 --output ~/Downloads/myfile.mp4
+
+# Stream video to player
+nebula play 67
+
+# System health check
+nebula status
+```
+
+### Command Reference
+
+| Command | Description | Options |
+|---------|-------------|---------|
+| `ping` | Quick connectivity test | None |
+| `upload <file>` | Upload file to cloud | `--description` |
+| `list` | List all files | `--limit`, `--skip` |
+| `download <id>` | Download file by ID | `--output`, `-o` |
+| `play <id>` | Stream video to VLC/mpv | `--player` |
+| `status` | System health dashboard | `--show-local`, `--show-server` |
+
+---
+
+## ⚠️ Common Issues & Solutions
+
+### 🐛 Issue: Uploads Hang Forever from WSL
+
+**Symptoms:**
+- `nebula upload` connects but never completes
+- Health check (`nebula ping`) works fine
+- `curl` also hangs when uploading files
+
+**Root Cause:**
+WSL has Tailscale installed, which conflicts with Windows Tailscale, causing packet loss.
+
+**Solution:**
+```bash
+# Disable Tailscale in WSL (use Windows Tailscale instead)
+sudo tailscale down
+
+# Make it permanent - add to ~/.bashrc
+echo 'sudo tailscale down 2>/dev/null || true' >> ~/.bashrc
+
+# Or uninstall Tailscale from WSL entirely
+sudo apt remove tailscale
+```
+
+**Why This Works:**
+- Windows Tailscale handles routing correctly
+- WSL → Windows → Tailscale → Server path works
+- WSL Tailscale → Tailscale creates a black hole for large packets
+
+---
+
+### 🐛 Issue: "NEBULA_SERVER_URL environment variable not set"
+
+**Symptoms:**
+```
+❌ Error: NEBULA_SERVER_URL environment variable not set
+```
+
+**Solution:**
+```bash
+# Create .env.client in client/cli directory
+cd client/cli
+echo "NEBULA_SERVER_URL=http://YOUR_TAILSCALE_IP:8000" > .env.client
+```
+
+**Find Your Tailscale IP:**
+```bash
+# On server laptop
+tailscale status
+# Look for the Linux machine IP (e.g., 100.83.147.22)
+```
+
+---
+
+### 🐛 Issue: Video Streaming Works But Seeking Doesn't
+
+**Symptoms:**
+- Videos play from the start
+- Can't skip ahead or seek
+- Have to watch entire video
+
+**Root Cause:**
+Server not properly handling HTTP Range requests (HTTP 206).
+
+**Solution:**
+Ensure you're using the latest `stream.py` with byte-range support:
+```bash
+# On server, check the endpoint is registered
+docker exec -it nebula-api curl http://localhost:8000/api/files/67/stream -H "Range: bytes=0-1000" -I
+
+# Should return: HTTP/1.1 206 Partial Content
+```
+
+---
+
+### 🐛 Issue: "File not found" After Upload
+
+**Symptoms:**
+- Upload appears successful
+- File ID returned
+- But file doesn't appear in `nebula list`
+
+**Solution:**
+```bash
+# Check server logs
+docker logs nebula-api
+
+# Check MinIO directly
+docker exec -it nebula-s3 mc ls nebula-uploads/
+
+# Verify database has record
+docker exec -it nebula-db psql -U nebula -d nebula_meta -c "SELECT id, filename FROM files ORDER BY id DESC LIMIT 5;"
+```
+
+---
+
+### 🐛 Issue: Cannot Connect from PowerShell (Windows)
+
+**Symptoms:**
+- Works in WSL but not PowerShell
+- "Command not found: nebula"
+
+**Solution:**
+Create a PowerShell function or batch file:
+
+**Option 1: PowerShell Function**
+```powershell
+# Add to $PROFILE
+function nebula {
+    wsl -e bash -c "cd /home/abhinav/dev/nebula/client/cli && source /home/abhinav/dev/nebula/client/.venv/bin/activate && nebula $args"
+}
+```
+
+**Option 2: Batch File**
+```batch
+# Create C:\Users\abhin\nebula.bat
+@echo off
+wsl -e bash -c "cd /home/abhinav/dev/nebula/client/cli && source /home/abhinav/dev/nebula/client/.venv/bin/activate && nebula %*"
+```
+
+---
+
+### 🐛 Issue: Celery Worker Not Processing Jobs
+
+**Symptoms:**
+- Jobs queued but never complete
+- Worker container running but idle
+
+**Solution:**
+```bash
+# Check worker logs
+docker logs nebula-worker
+
+# Verify Redis connectivity
+docker exec -it nebula-worker python -c "import redis; r=redis.from_url('redis://queue:6379/0'); print(r.ping())"
+
+# Restart worker
+docker-compose restart worker
+```
+
+---
+
+## 🔧 Development
+
+### Running Tests
+
+```bash
+# Server tests (TODO: Add test suite)
+cd server/backend
+pytest
+
+# CLI tests (TODO: Add test suite)
+cd client/cli
+pytest
+```
+
+### Database Migrations
+
+```bash
+# Create new migration
+docker exec -it nebula-api alembic revision --autogenerate -m "Description"
+
+# Apply migrations
+docker exec -it nebula-api alembic upgrade head
+
+# Rollback
+docker exec -it nebula-api alembic downgrade -1
+```
+
+### Adding New Features
+
+1. **New API Endpoint:**
+   - Add route in `server/backend/app/api/`
+   - Register in `server/backend/app/main.py`
+
+2. **New CLI Command:**
+   - Create file in `client/cli/src/commands/`
+   - Register in `client/cli/src/main.py`
+
+3. **Database Changes:**
+   - Update model in `server/backend/app/models/`
+   - Generate migration with Alembic
+
+---
+
+## 📊 Implementation Status
+
+### ✅ Completed Features
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| File Upload | ✅ | curl-based, WSL-compatible |
+| File Download | ✅ | Progress bars, resume support planned |
+| File Listing | ✅ | Rich tables, pagination |
+| Video Streaming | ✅ | Byte-range support, seeking |
+| Health Checks | ✅ | System status dashboard |
+| WSL Integration | ✅ | Temp file copy workaround |
+
+### 🚧 In Progress
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Video Transcoding | 🚧 | Celery worker configured, FFmpeg integration needed |
+| Multi-Quality Output | 🚧 | Requires transcoding first |
+| Authentication | 🚧 | JWT scaffold ready |
+| File Deletion | 🚧 | API endpoint needed |
+
+### 📋 Planned
+
+| Feature | Priority | Description |
+|---------|----------|-------------|
+| Resume Downloads | Medium | Resume interrupted downloads |
+| Search | Medium | Search files by name/metadata |
+| Thumbnails | Low | Generate video thumbnails |
+| Web UI | Low | Browser-based interface |
+
+---
+
+## 📝 License
+
+MIT License - See LICENSE file for details
+
+---
+
+## 🙏 Acknowledgments
+
+Built with:
+- [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
+- [MinIO](https://min.io/) - S3-compatible storage
+- [Tailscale](https://tailscale.com/) - Zero-config VPN
+- [Typer](https://typer.tiangolo.com/) - CLI framework
+- [Rich](https://github.com/Textualize/rich) - Beautiful terminal output
+
+---
+
+<div align="center">
+
+**Made with ❤️ for personal cloud freedom**
+
+[Report Bug](https://github.com/yourusername/nebula/issues) · [Request Feature](https://github.com/yourusername/nebula/issues)
+
+</div>
