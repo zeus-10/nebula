@@ -1,4 +1,4 @@
-# Upload command - streams files to server with progress tracking
+# Upload command - uploads files to server
 
 import os
 import typer
@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Optional
 import httpx
 from rich.console import Console
-from rich.progress import Progress, BarColumn, FileSizeColumn, TimeRemainingColumn, TransferSpeedColumn
 
 console = Console()
 
@@ -41,41 +40,27 @@ def upload_file(
         console.print(f"[blue]📝 Description:[/blue] {description}")
 
     try:
-        # Upload with progress tracking
-        with Progress(
-            BarColumn(),
-            "[progress.percentage]{task.percentage:>3.0f}%",
-            FileSizeColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-            console=console
-        ) as progress:
+        with open(file_path, 'rb') as f:
+            # Prepare multipart form data
+            files = {'file': (filename, f, 'application/octet-stream')}
+            data = {}
+            if description:
+                data['description'] = description
 
-            task = progress.add_task("Uploading...", total=file_size)
+            # Upload using httpx (modern async HTTP client)
+            console.print(f"[yellow]🚀 Uploading to {server_url}/api/upload...[/yellow]")
 
-            with open(file_path, 'rb') as f:
-                # Prepare multipart form data
-                files = {'file': (filename, f, 'application/octet-stream')}
-                data = {}
-                if description:
-                    data['description'] = description
+            with httpx.Client(timeout=300.0) as client:  # 5 minute timeout
+                response = client.post(
+                    f"{server_url}/api/upload",
+                    files=files,
+                    data=data
+                )
 
-                # Upload using httpx for better streaming
-                with httpx.Client(timeout=300.0) as client:  # 5 minute timeout
-                    with client.stream(
-                        'POST',
-                        f"{server_url}/api/upload",
-                        files=files,
-                        data=data
-                    ) as response:
-                        response.raise_for_status()
+                response.raise_for_status()
 
-                        # Read response (though we don't need to track upload progress
-                        # since we're streaming from file)
-                        result = response.json()
-
-                        # Mark progress as complete
-                        progress.update(task, completed=file_size)
+                # Parse response
+                result = response.json()
 
         # Display success
         file_info = result['file']
