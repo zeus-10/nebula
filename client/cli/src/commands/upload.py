@@ -96,56 +96,56 @@ def upload_file(
                 data['description'] = description
 
             # Upload using httpx (modern async HTTP client)
-    console.print(f"[yellow]📡 Uploading {file_size:,} bytes to server...[/yellow]")
-    console.print(f"[blue]⏳ Please wait, this may take a few minutes for large files...[/blue]")
+            console.print(f"[yellow]📡 Uploading {file_size:,} bytes to server...[/yellow]")
+            console.print(f"[blue]⏳ Please wait, this may take a few minutes for large files...[/blue]")
 
-    # #region agent log - Before HTTP request
-    log_data = {
-        "sessionId": "debug-upload-issue",
-        "runId": "hypothesis-test",
-        "hypothesisId": "C",
-        "location": "upload.py:before_http",
-        "message": "About to make HTTP request",
-        "data": {
-            "server_url": server_url,
-            "file_size": file_size,
-            "filename": filename,
-            "content_type": files['file'][2] if len(files['file']) > 2 else None,
-            "description_in_data": 'description' in data
-        },
-        "timestamp": int(time.time() * 1000)
-    }
-    with open("/home/abhinav/nebula/.cursor/debug.log", "a") as f:
-        f.write(json.dumps(log_data) + "\n")
-    # #endregion
+            # #region agent log - Before HTTP request
+            log_data = {
+                "sessionId": "debug-upload-issue",
+                "runId": "hypothesis-test",
+                "hypothesisId": "C",
+                "location": "upload.py:before_http",
+                "message": "About to make HTTP request",
+                "data": {
+                    "server_url": server_url,
+                    "file_size": file_size,
+                    "filename": filename,
+                    "content_type": files['file'][2] if len(files['file']) > 2 else None,
+                    "description_in_data": 'description' in data
+                },
+                "timestamp": int(time.time() * 1000)
+            }
+            with open("/home/abhinav/nebula/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_data) + "\n")
+            # #endregion
 
-    with httpx.Client(timeout=600.0) as client:  # 10 minute timeout for large files
-        # Use explicit headers to avoid streaming issues
-        headers = {"Accept": "application/json"}
-        response = client.post(
-            f"{server_url}/api/upload",
-            files=files,
-            data=data,
-            headers=headers
-        )
+            with httpx.Client(timeout=600.0) as client:  # 10 minute timeout for large files
+                # Use explicit headers to avoid streaming issues
+                headers = {"Accept": "application/json"}
+                response = client.post(
+                    f"{server_url}/api/upload",
+                    files=files,
+                    data=data,
+                    headers=headers
+                )
 
-        # #region agent log - After HTTP request
-        log_data = {
-            "sessionId": "debug-upload-issue",
-            "runId": "hypothesis-test",
-            "hypothesisId": "D",
-            "location": "upload.py:after_http",
-            "message": "HTTP request completed",
-            "data": {
-                "status_code": response.status_code,
-                "response_headers": dict(response.headers),
-                "response_size": len(response.text) if response.text else 0
-            },
-            "timestamp": int(time.time() * 1000)
-        }
-        with open("/home/abhinav/nebula/.cursor/debug.log", "a") as f:
-            f.write(json.dumps(log_data) + "\n")
-        # #endregion
+                # #region agent log - After HTTP request
+                log_data = {
+                    "sessionId": "debug-upload-issue",
+                    "runId": "hypothesis-test",
+                    "hypothesisId": "D",
+                    "location": "upload.py:after_http",
+                    "message": "HTTP request completed",
+                    "data": {
+                        "status_code": response.status_code,
+                        "response_headers": dict(response.headers),
+                        "response_size": len(response.text) if response.text else 0
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }
+                with open("/home/abhinav/nebula/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps(log_data) + "\n")
+                # #endregion
 
                 console.print(f"[yellow]📡 Server responded with status: {response.status_code}[/yellow]")
 
@@ -154,12 +154,12 @@ def upload_file(
                 # Parse response
                 result = response.json()
 
-        # Display success
-        file_info = result['file']
-        console.print(f"[green]✅ Upload successful![/green]")
-        console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
-        console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
-        console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
+                # Display success
+                file_info = result['file']
+                console.print(f"[green]✅ Upload successful![/green]")
+                console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
+                console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
+                console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
 
     except httpx.TimeoutException as e:
         # #region agent log - Timeout exception
