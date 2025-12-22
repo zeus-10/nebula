@@ -14,9 +14,9 @@ logging.basicConfig(
 # Configure FastAPI for large file uploads
 app = FastAPI(
     title="Nebula Cloud",
-    # File size limits for video uploads
-    # max_request_size: 10GB (supports large video files)
-    # Individual files can be up to this size
+    # Large file upload configuration
+    # Individual files can be up to 10GB+
+    # Total request size limits handled by server configuration
 )
 
 app.include_router(ping.router, prefix="/api", tags=["health"])
