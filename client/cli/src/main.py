@@ -16,6 +16,8 @@ SERVER_URL = os.getenv("NEBULA_SERVER_URL")
 
 # Import commands
 from .commands.upload import upload_file
+from .commands.list import list_files
+from .commands.download import download_file
 
 @app.command()
 def ping():
@@ -40,6 +42,28 @@ def upload(
     Upload a file to Nebula Cloud
     """
     upload_file(file_path, SERVER_URL, description)
+
+@app.command()
+def list(
+    limit: int = typer.Option(50, help="Maximum number of files to display"),
+    skip: int = typer.Option(0, help="Number of files to skip")
+):
+    """
+    List all uploaded files with metadata
+    """
+    list_files(SERVER_URL, limit, skip)
+
+@app.command()
+def download(
+    file_id: int = typer.Argument(..., help="ID of the file to download"),
+    output_path: Optional[str] = typer.Option(None, "--output", "-o", help="Output file path (defaults to original filename)")
+):
+    """
+    Download a file from Nebula Cloud by its ID.
+
+    Preserves original filename if no output path is specified.
+    """
+    download_file(file_id, output_path, SERVER_URL)
 
 # Adding a callback ensures the 'Commands' section is generated
 @app.callback()
