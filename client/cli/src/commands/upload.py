@@ -70,12 +70,12 @@ def upload_file(
                     # Parse response
                     result = response.json()
 
-        # Display success
-        file_info = result['file']
-        console.print(f"[green]✅ Upload successful![/green]")
-        console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
-        console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
-        console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
+                # Display success
+                file_info = result['file']
+                console.print(f"[green]✅ Upload successful![/green]")
+                console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
+                console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
+                console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
 
     except httpx.TimeoutException:
         console.print("[red]❌ Upload timeout - file too large or network slow[/red]")
