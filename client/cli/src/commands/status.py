@@ -65,11 +65,11 @@ def format_bytes(bytes_value):
     if bytes_value < 1024:
         return f"{bytes_value} B"
     elif bytes_value < 1024 * 1024:
-        return ".1f"
+        return f"{bytes_value / 1024:.1f} KB"
     elif bytes_value < 1024 * 1024 * 1024:
-        return ".1f"
+        return f"{bytes_value / (1024 * 1024):.1f} MB"
     else:
-        return ".1f"
+        return f"{bytes_value / (1024 * 1024 * 1024):.1f} GB"
 
 def show_system_health(
     server_url: str = typer.Option(..., envvar="NEBULA_SERVER_URL"),
@@ -96,21 +96,21 @@ def show_system_health(
             # CPU Table
             cpu_table = Table(title="🎯 CPU", show_header=False, box=None)
             cpu_table.add_row("Cores", f"{specs['cpu']['cores']}")
-            cpu_table.add_row("Usage", ".1f")
+            cpu_table.add_row("Usage", f"{specs['cpu']['usage']:.1f}%")
             console.print(cpu_table)
 
             # Memory Table
             mem_table = Table(title="🧠 Memory", show_header=False, box=None)
             mem_table.add_row("Total", format_bytes(specs['memory']['total']))
             mem_table.add_row("Used", format_bytes(specs['memory']['used']))
-            mem_table.add_row("Usage", ".1f")
+            mem_table.add_row("Usage", f"{specs['memory']['percent']:.1f}%")
             console.print(mem_table)
 
             # Disk Table
             disk_table = Table(title="💾 Storage", show_header=False, box=None)
             disk_table.add_row("Total", format_bytes(specs['disk']['total']))
             disk_table.add_row("Used", format_bytes(specs['disk']['used']))
-            disk_table.add_row("Usage", ".1f")
+            disk_table.add_row("Usage", f"{specs['disk']['percent']:.1f}%")
             console.print(disk_table)
 
             # Network Table
