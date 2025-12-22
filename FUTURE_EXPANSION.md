@@ -282,3 +282,4 @@ Developer workflow:
 - **DevOps platform** is the big vision but comes later
 - All features should maintain the core philosophy: **self-hosted, private, resource-efficient**
 
+
