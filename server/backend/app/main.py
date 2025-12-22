@@ -3,8 +3,21 @@
 from fastapi import FastAPI
 from app.api import ping, upload
 import os
+import logging
 
-app = FastAPI(title="Nebula Cloud")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Configure FastAPI for large file uploads
+app = FastAPI(
+    title="Nebula Cloud",
+    # File size limits for video uploads
+    # max_request_size: 10GB (supports large video files)
+    # Individual files can be up to this size
+)
 
 app.include_router(ping.router, prefix="/api", tags=["health"])
 app.include_router(upload.router, prefix="/api", tags=["files"])

@@ -4,12 +4,14 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
 from sqlalchemy.orm import Session
 from typing import Optional
 import mimetypes
+import logging
 
 from app.core.database import get_db
 from app.services.file_service import upload_file
 from app.models.file import File as FileModel
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/upload")
@@ -28,20 +30,32 @@ async def upload_file_endpoint(
 
     Returns file information including ID, filename, size, etc.
     """
+    request_id = f"upload_{id(file)}"  # Unique request ID for tracking
+    logger.info(f"[{request_id}] 🚀 STARTING UPLOAD - File: {file.filename}")
+
     try:
         # Validate file
         if not file.filename:
+            logger.error(f"[{request_id}] ❌ VALIDATION FAILED - No filename provided")
             raise HTTPException(status_code=400, detail="No filename provided")
+
+        logger.info(f"[{request_id}] ✅ VALIDATION PASSED - Filename: {file.filename}")
 
         # Determine content type
         content_type = file.content_type
+        logger.info(f"[{request_id}] 📋 CONTENT TYPE - Original: {content_type}")
+
         if content_type == "application/octet-stream":
             # Try to guess from filename
             guessed_type, _ = mimetypes.guess_type(file.filename)
             if guessed_type:
                 content_type = guessed_type
+                logger.info(f"[{request_id}] 🔍 CONTENT TYPE - Guessed: {content_type}")
+
+        logger.info(f"[{request_id}] 📋 FINAL CONFIG - Content-Type: {content_type}, Description: {description}, User-ID: {user_id}")
 
         # Upload file using service
+        logger.info(f"[{request_id}] 🔄 CALLING UPLOAD SERVICE...")
         file_record = upload_file(
             db=db,
             file_obj=file.file,
@@ -51,7 +65,9 @@ async def upload_file_endpoint(
             user_id=user_id
         )
 
-        return {
+        logger.info(f"[{request_id}] ✅ UPLOAD COMPLETE - File ID: {file_record.id}, Path: {file_record.file_path}, Size: {file_record.size} bytes")
+
+        response_data = {
             "success": True,
             "file": {
                 "id": file_record.id,
@@ -65,7 +81,11 @@ async def upload_file_endpoint(
             }
         }
 
+        logger.info(f"[{request_id}] 📤 RESPONSE SENT - Success: {response_data['success']}")
+        return response_data
+
     except Exception as e:
+        logger.error(f"[{request_id}] 💥 UPLOAD FAILED - Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 

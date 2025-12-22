@@ -40,3 +40,4 @@ def create_tables():
 def drop_tables():
     """Drop all tables. Use with caution!"""
     Base.metadata.drop_all(bind=engine)
+

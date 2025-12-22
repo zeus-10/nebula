@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY . .
 
-# Run the API Gateway
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Run the API Gateway with large file support
+# --limit-request-line 0: No limit on request line size
+# --limit-request-field_size 0: No limit on field size
+# This allows large file uploads (videos up to 10GB+)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--limit-request-line", "0", "--limit-request-field_size", "0"]
 

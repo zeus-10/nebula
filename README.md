@@ -193,6 +193,21 @@ services:
 
 ## 5. Database Setup & Migrations
 
+### File Size Limits
+
+Nebula Cloud supports large video file uploads:
+
+- **Maximum File Size**: Unlimited (theoretical MinIO limit)
+- **Practical Limits**:
+  - Network speed and stability
+  - Client timeout: 2 hours (CLI)
+  - Server resources (RAM/disk)
+- **Recommended**: Up to 10GB for most use cases
+- **Supported Formats**: Any file type (videos, images, documents)
+- **Upload Method**: Streaming (memory efficient, handles large files)
+- **Progress Tracking**: Real-time progress bars (CLI)
+- **Resume Support**: Not yet implemented (future phase)
+
 ### Environment Variables
 
 Create a `.env` file in the `server/` directory with your configuration:

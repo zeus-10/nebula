@@ -6,9 +6,12 @@ import uuid
 import os
 import hashlib
 from datetime import datetime
+import logging
 
 from app.core.s3_client import minio_client
 from app.models.file import File
+
+logger = logging.getLogger(__name__)
 
 
 def generate_file_key(filename: str) -> str:
@@ -77,18 +80,27 @@ def upload_file(
     Returns:
         File: Created file record
     """
+    upload_id = f"upload_{id(file_obj)}"  # Track this specific upload
+    logger.info(f"[{upload_id}] 🔄 STARTING FILE SERVICE - File: {filename}, Type: {content_type}")
+
     # Get file size
     file_obj.seek(0, 2)  # Seek to end
     file_size = file_obj.tell()
     file_obj.seek(0)  # Reset to beginning
 
+    logger.info(f"[{upload_id}] 📏 FILE SIZE - {file_size:,} bytes ({file_size/1024/1024:.2f} MB)")
+
     # Generate unique S3 key
     s3_key = generate_file_key(filename)
+    logger.info(f"[{upload_id}] 🔑 GENERATED S3 KEY - {s3_key}")
 
     # Calculate file hash (optional, for integrity checking)
+    logger.info(f"[{upload_id}] 🔐 CALCULATING FILE HASH...")
     file_hash = calculate_file_hash(file_obj)
+    logger.info(f"[{upload_id}] ✅ HASH CALCULATED - {file_hash[:16]}...")
 
     # Upload to MinIO
+    logger.info(f"[{upload_id}] ☁️  STARTING MINIO UPLOAD...")
     try:
         minio_client.upload_file(
             file_obj=file_obj,
@@ -96,10 +108,21 @@ def upload_file(
             file_size=file_size,
             content_type=content_type
         )
+        logger.info(f"[{upload_id}] ✅ MINIO UPLOAD SUCCESSFUL - Object: {s3_key}")
+
+        # Verify upload
+        verify_info = minio_client.get_file_info(s3_key)
+        if verify_info:
+            logger.info(f"[{upload_id}] 🔍 VERIFICATION - Size: {verify_info['size']}, Type: {verify_info['content_type']}")
+        else:
+            logger.warning(f"[{upload_id}] ⚠️  VERIFICATION FAILED - Could not retrieve file info")
+
     except Exception as e:
+        logger.error(f"[{upload_id}] ❌ MINIO UPLOAD FAILED - Error: {e}", exc_info=True)
         raise Exception(f"Failed to upload file to storage: {e}")
 
     # Save metadata to database
+    logger.info(f"[{upload_id}] 💾 SAVING METADATA TO DATABASE...")
     try:
         file_record = File(
             filename=filename,
@@ -115,14 +138,18 @@ def upload_file(
         db.commit()
         db.refresh(file_record)
 
+        logger.info(f"[{upload_id}] ✅ DATABASE SAVE SUCCESSFUL - File ID: {file_record.id}")
         return file_record
 
     except Exception as e:
+        logger.error(f"[{upload_id}] ❌ DATABASE SAVE FAILED - Error: {e}", exc_info=True)
         # If database save fails, try to clean up MinIO file
         try:
+            logger.info(f"[{upload_id}] 🧹 CLEANING UP MINIO FILE - {s3_key}")
             minio_client.delete_file(s3_key)
-        except:
-            pass  # Ignore cleanup errors
+            logger.info(f"[{upload_id}] ✅ MINIO CLEANUP COMPLETED")
+        except Exception as cleanup_error:
+            logger.error(f"[{upload_id}] ❌ MINIO CLEANUP FAILED - {cleanup_error}")
 
         raise Exception(f"Failed to save file metadata: {e}")
 
