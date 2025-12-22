@@ -3,11 +3,13 @@ import sys
 import typer
 import requests
 from typing import Optional
+from pathlib import Path
 from dotenv import load_dotenv
 from rich.console import Console
 
-# Load the .env.client from the cli folder
-load_dotenv('.env.client')
+# Load the .env.client from the cli folder relative to this file
+env_path = Path(__file__).parent.parent / '.env.client'
+load_dotenv(env_path)
 
 # Creating the main Typer instance
 app = typer.Typer(help="Nebula Cloud CLI", no_args_is_help=True)
@@ -20,6 +22,7 @@ from .commands.upload import upload_file
 from .commands.list import list_files
 from .commands.download import download_file
 from .commands.status import show_system_health
+from .commands.play import play_file
 
 @app.command()
 def ping():
@@ -78,6 +81,18 @@ def status(
     Shows CPU, memory, disk usage, network stats, and server health.
     """
     show_system_health(show_local=show_local, show_server=show_server)
+
+@app.command()
+def play(
+    file_id: int = typer.Argument(..., help="ID of the video file to play"),
+    player: Optional[str] = typer.Option(None, "--player", "-p", help="Media player to use (vlc, mpv)")
+):
+    """
+    Stream a video file to VLC or mpv.
+
+    Automatically detects available media player. Supports seeking.
+    """
+    play_file(file_id, player=player)
 
 # Adding a callback ensures the 'Commands' section is generated
 @app.callback()

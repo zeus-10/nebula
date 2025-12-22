@@ -96,6 +96,29 @@ class MinIOClient:
         except S3Error as e:
             raise Exception(f"Failed to get file stream '{object_name}': {e}")
 
+    def get_file_stream_range(self, object_name: str, offset: int = 0, length: int = 0) -> BinaryIO:
+        """
+        Get partial file as stream from MinIO (for byte-range requests)
+
+        Args:
+            object_name: S3 object key
+            offset: Start byte position
+            length: Number of bytes to read
+
+        Returns:
+            BinaryIO: File-like object for streaming partial content
+        """
+        try:
+            response = self.client.get_object(
+                bucket_name=self.bucket_name,
+                object_name=object_name,
+                offset=offset,
+                length=length
+            )
+            return response
+        except S3Error as e:
+            raise Exception(f"Failed to get file stream range '{object_name}': {e}")
+
     def file_exists(self, object_name: str) -> bool:
         """
         Check if file exists in MinIO
