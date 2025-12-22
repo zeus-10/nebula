@@ -31,24 +31,128 @@ def read_root():
 @app.get("/health")
 def health_check():
     """
-    Phase 1 Connectivity Check
-    Verifies that the API is running and can read config.
+    Comprehensive system health check with detailed specs.
     """
-    # Check Database Config
-    db_status = "configured" if os.getenv("DATABASE_URL") else "missing"
-    
-    # Check Battery Status (Mock for Phase 1)
-    power_path = "/host_power/BAT0/capacity" # Check BAT0 or BAT1 on your laptop
-    battery_level = "unknown"
-    
-    if os.path.exists(power_path):
-        with open(power_path, "r") as f:
-            battery_level = f"{f.read().strip()}%"
+    import psutil
+    import platform
+    from datetime import datetime
 
-    return {
-        "status": "healthy", 
-        "database": db_status,
-        "battery": battery_level,
-        "worker": "ready"
-    }
+    try:
+        # Database status
+        db_status = "configured" if os.getenv("DATABASE_URL") else "missing"
+
+        # Battery status
+        power_path = "/host_power/BAT0/capacity"
+        battery_level = "unknown"
+
+        if os.path.exists(power_path):
+            with open(power_path, "r") as f:
+                battery_level = f"{f.read().strip()}%"
+        else:
+            # Try alternative battery paths
+            alt_paths = ["/sys/class/power_supply/BAT0/capacity", "/sys/class/power_supply/BAT1/capacity"]
+            for path in alt_paths:
+                if os.path.exists(path):
+                    with open(path, "r") as f:
+                        battery_level = f"{f.read().strip()}%"
+                    break
+
+        # System information
+        system_info = {
+            "platform": platform.system(),
+            "platform_version": platform.release(),
+            "architecture": platform.machine(),
+            "python_version": platform.python_version(),
+            "hostname": platform.node()
+        }
+
+        # CPU information
+        cpu_info = {
+            "cores_physical": psutil.cpu_count(logical=False),
+            "cores_logical": psutil.cpu_count(logical=True),
+            "usage_percent": psutil.cpu_percent(interval=0.1)
+        }
+
+        # Memory information
+        memory = psutil.virtual_memory()
+        memory_info = {
+            "total": memory.total,
+            "available": memory.available,
+            "used": memory.used,
+            "percent": memory.percent
+        }
+
+        # Disk information
+        disk = psutil.disk_usage('/')
+        disk_info = {
+            "total": disk.total,
+            "used": disk.used,
+            "free": disk.free,
+            "percent": disk.percent
+        }
+
+        # Network information
+        net = psutil.net_io_counters()
+        network_info = {
+            "bytes_sent": net.bytes_sent,
+            "bytes_recv": net.bytes_recv,
+            "packets_sent": net.packets_sent,
+            "packets_recv": net.packets_recv
+        }
+
+        # Process information
+        process_info = {
+            "cpu_percent": psutil.cpu_percent(),
+            "memory_percent": psutil.virtual_memory().percent,
+            "num_processes": len(psutil.pids())
+        }
+
+        # Overall status determination
+        status = "healthy"
+        issues = []
+
+        if cpu_info["usage_percent"] > 90:
+            status = "degraded"
+            issues.append("High CPU usage")
+
+        if memory_info["percent"] > 90:
+            status = "degraded"
+            issues.append("High memory usage")
+
+        if disk_info["percent"] > 95:
+            status = "degraded"
+            issues.append("Low disk space")
+
+        if db_status != "configured":
+            status = "degraded"
+            issues.append("Database not configured")
+
+        return {
+            "status": status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "issues": issues if issues else None,
+            "system": system_info,
+            "cpu": cpu_info,
+            "memory": memory_info,
+            "disk": disk_info,
+            "network": network_info,
+            "processes": process_info,
+            "services": {
+                "database": db_status,
+                "battery": battery_level,
+                "worker": "ready"  # TODO: Check actual worker status
+            }
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e),
+            "services": {
+                "database": "configured" if os.getenv("DATABASE_URL") else "missing",
+                "battery": battery_level if 'battery_level' in locals() else "unknown",
+                "worker": "unknown"
+            }
+        }
 

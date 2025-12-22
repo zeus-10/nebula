@@ -18,6 +18,7 @@ SERVER_URL = os.getenv("NEBULA_SERVER_URL")
 from .commands.upload import upload_file
 from .commands.list import list_files
 from .commands.download import download_file
+from .commands.status import show_system_health
 
 @app.command()
 def ping():
@@ -64,6 +65,18 @@ def download(
     Preserves original filename if no output path is specified.
     """
     download_file(file_id, output_path, SERVER_URL)
+
+@app.command()
+def status(
+    show_local: bool = typer.Option(True, help="Show local system specifications"),
+    show_server: bool = typer.Option(True, help="Show server health status")
+):
+    """
+    Display detailed system health and specifications.
+
+    Shows CPU, memory, disk usage, network stats, and server health.
+    """
+    show_system_health(SERVER_URL, show_local, show_server)
 
 # Adding a callback ensures the 'Commands' section is generated
 @app.callback()
