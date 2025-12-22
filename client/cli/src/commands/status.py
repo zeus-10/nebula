@@ -10,6 +10,7 @@ from rich.text import Text
 import platform
 import os
 from datetime import datetime
+from typing import Optional
 
 console = Console()
 
@@ -72,7 +73,7 @@ def format_bytes(bytes_value):
         return f"{bytes_value / (1024 * 1024 * 1024):.1f} GB"
 
 def show_system_health(
-    server_url: str = typer.Option(..., envvar="NEBULA_SERVER_URL"),
+    server_url: Optional[str] = None,
     show_local: bool = typer.Option(True, help="Show local system specs"),
     show_server: bool = typer.Option(True, help="Show server health status")
 ):
@@ -81,6 +82,13 @@ def show_system_health(
 
     Shows both local system specs and remote server health status.
     """
+    # Load server URL from environment if not provided
+    if not server_url:
+        server_url = os.getenv("NEBULA_SERVER_URL")
+        if not server_url:
+            console.print("[red]❌ Error: NEBULA_SERVER_URL environment variable not set[/red]")
+            raise typer.Exit(1)
+
     console.print("[bold blue]🔍 Nebula System Health Report[/bold blue]")
     console.print(f"[dim]Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/dim]")
     console.print()

@@ -7,9 +7,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 # Load the .env.client from the cli folder
-import pathlib
-env_path = pathlib.Path(__file__).parent.parent / '.env.client'
-load_dotenv(env_path)
+load_dotenv('.env.client')
 
 # Creating the main Typer instance
 app = typer.Typer(help="Nebula Cloud CLI", no_args_is_help=True)
@@ -45,7 +43,7 @@ def upload(
     """
     Upload a file to Nebula Cloud
     """
-    upload_file(file_path, SERVER_URL, description)
+    upload_file(file_path, description=description)
 
 @app.command()
 def list(
@@ -55,7 +53,7 @@ def list(
     """
     List all uploaded files with metadata
     """
-    list_files(SERVER_URL, limit, skip)
+    list_files(limit=limit, skip=skip)
 
 @app.command()
 def download(
@@ -67,7 +65,7 @@ def download(
 
     Preserves original filename if no output path is specified.
     """
-    download_file(file_id, output_path, SERVER_URL)
+    download_file(file_id, output_path)
 
 @app.command()
 def status(
@@ -79,7 +77,7 @@ def status(
 
     Shows CPU, memory, disk usage, network stats, and server health.
     """
-    show_system_health(SERVER_URL, show_local, show_server)
+    show_system_health(show_local=show_local, show_server=show_server)
 
 # Adding a callback ensures the 'Commands' section is generated
 @app.callback()

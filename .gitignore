@@ -82,3 +82,16 @@ config/secrets.json
 notes.txt
 TODO.txt
 
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+nebula_cli_env/
+*venv*/
+*env*/
+
+# Local scripts and tools
+nebula
+

@@ -5,17 +5,25 @@ from typing import Optional
 import httpx
 from rich.console import Console
 from rich.table import Table
+import os
 
 console = Console()
 
 def list_files(
-    server_url: str = typer.Option(..., envvar="NEBULA_SERVER_URL"),
+    server_url: Optional[str] = None,
     limit: int = typer.Option(50, help="Maximum number of files to display"),
     skip: int = typer.Option(0, help="Number of files to skip")
 ):
     """
     List all uploaded files with metadata.
     """
+    # Load server URL from environment if not provided
+    if not server_url:
+        server_url = os.getenv("NEBULA_SERVER_URL")
+        if not server_url:
+            console.print("[red]❌ Error: NEBULA_SERVER_URL environment variable not set[/red]")
+            raise typer.Exit(1)
+
     console.print(f"[yellow]📋 Fetching file list from {server_url}...[/yellow]")
 
     try:
@@ -27,7 +35,8 @@ def list_files(
             )
             response.raise_for_status()
 
-        files = response.json()
+        result = response.json()
+        files = result.get('files', [])
 
         if not files:
             console.print("[yellow]📂 No files found.[/yellow]")
@@ -48,11 +57,11 @@ def list_files(
             if size_bytes < 1024:
                 size_str = f"{size_bytes} B"
             elif size_bytes < 1024 * 1024:
-                size_str = ".1f"
+                size_str = f"{size_bytes / 1024:.1f} KB"
             elif size_bytes < 1024 * 1024 * 1024:
-                size_str = ".1f"
+                size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
             else:
-                size_str = ".1f"
+                size_str = f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
             # Format upload date (remove time part for display)
             upload_date = file['upload_date'][:10] if file['upload_date'] else "Unknown"
@@ -78,7 +87,8 @@ def list_files(
             )
 
         console.print(table)
-        console.print(f"[green]✅ Found {len(files)} files[/green]")
+        total_count = result.get('count', len(files))
+        console.print(f"[green]✅ Found {len(files)} files (total: {total_count})[/green]")
 
     except httpx.TimeoutException:
         console.print("[red]❌ Request timeout - server may be slow or unreachable[/red]")

@@ -11,7 +11,7 @@ console = Console()
 
 def upload_file(
     file_path: str,
-    server_url: str = typer.Option(..., envvar="NEBULA_SERVER_URL"),
+    server_url: Optional[str] = None,
     description: Optional[str] = None
 ):
     """
@@ -19,6 +19,12 @@ def upload_file(
 
     FILE_PATH: Path to the file to upload
     """
+    # Load server URL from environment if not provided
+    if not server_url:
+        server_url = os.getenv("NEBULA_SERVER_URL")
+        if not server_url:
+            console.print("[red]❌ Error: NEBULA_SERVER_URL environment variable not set[/red]")
+            raise typer.Exit(1)
 
     # Validate file exists
     if not os.path.exists(file_path):
@@ -42,40 +48,40 @@ def upload_file(
     console.print(f"[yellow]🔗 Server URL: {server_url}/api/upload[/yellow]")
 
     try:
-            with open(file_path, 'rb') as f:
-                # Prepare multipart form data
-                files = {'file': (filename, f, 'application/octet-stream')}
-                data = {}
-                if description:
-                    data['description'] = description
+        with open(file_path, 'rb') as f:
+            # Prepare multipart form data
+            files = {'file': (filename, f, 'application/octet-stream')}
+            data = {}
+            if description:
+                data['description'] = description
 
-                # Upload using httpx (modern async HTTP client)
-                console.print(f"[yellow]📡 Uploading {file_size:,} bytes to server...[/yellow]")
-                console.print(f"[blue]⏳ Please wait, this may take a few minutes for large files...[/blue]")
+            # Upload using httpx (modern async HTTP client)
+            console.print(f"[yellow]📡 Uploading {file_size:,} bytes to server...[/yellow]")
+            console.print(f"[blue]⏳ Please wait, this may take a few minutes for large files...[/blue]")
 
-                with httpx.Client(timeout=600.0) as client:  # 10 minute timeout for large files
-                    # Use explicit headers to avoid streaming issues
-                    headers = {"Accept": "application/json"}
-                    response = client.post(
-                        f"{server_url}/api/upload",
-                        files=files,
-                        data=data,
-                        headers=headers
-                    )
+            with httpx.Client(timeout=600.0) as client:  # 10 minute timeout for large files
+                # Use explicit headers to avoid streaming issues
+                headers = {"Accept": "application/json"}
+                response = client.post(
+                    f"{server_url}/api/upload",
+                    files=files,
+                    data=data,
+                    headers=headers
+                )
 
-                    console.print(f"[yellow]📡 Server responded with status: {response.status_code}[/yellow]")
+                console.print(f"[yellow]📡 Server responded with status: {response.status_code}[/yellow]")
 
-                    response.raise_for_status()
+                response.raise_for_status()
 
-                    # Parse response
-                    result = response.json()
+                # Parse response
+                result = response.json()
 
-                # Display success
-                file_info = result['file']
-                console.print(f"[green]✅ Upload successful![/green]")
-                console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
-                console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
-                console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
+        # Display success
+        file_info = result['file']
+        console.print(f"[green]✅ Upload successful![/green]")
+        console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
+        console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
+        console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
 
     except httpx.TimeoutException:
         console.print("[red]❌ Upload timeout - file too large or network slow[/red]")
