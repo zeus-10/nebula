@@ -145,8 +145,11 @@ def show_system_health(
 
             server_table.add_row("Status", status_display)
 
+            # Get services data
+            services = health_data.get('services', {})
+
             # Database
-            db_status = health_data.get('database', 'unknown')
+            db_status = services.get('database', 'unknown')
             if db_status == 'configured':
                 db_display = "[green]✅ Configured[/green]"
             else:
@@ -154,7 +157,7 @@ def show_system_health(
             server_table.add_row("Database", db_display)
 
             # Battery
-            battery = health_data.get('battery', 'unknown')
+            battery = services.get('battery', 'unknown')
             if battery != 'unknown':
                 try:
                     battery_pct = int(battery.rstrip('%'))
@@ -171,7 +174,7 @@ def show_system_health(
             server_table.add_row("Battery", battery_display)
 
             # Worker
-            worker = health_data.get('worker', 'unknown')
+            worker = services.get('worker', 'unknown')
             if worker == 'ready':
                 worker_display = "[green]✅ Ready[/green]"
             else:
