@@ -24,5 +24,5 @@ COPY . .
 
 # Run the API Gateway with large file support
 # Large file upload limits are configured in FastAPI app
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--limit-concurrency", "100", "--timeout-keep-alive", "5"]
 

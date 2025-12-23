@@ -12,11 +12,15 @@ class MinIOClient:
     """MinIO S3-compatible storage client wrapper"""
 
     def __init__(self):
+        # Remove protocol prefix for endpoint
+        endpoint = settings.s3_endpoint.replace("http://", "").replace("https://", "")
+        
         self.client = Minio(
-            endpoint=settings.s3_endpoint.replace("http://", "").replace("https://", ""),
+            endpoint=endpoint,
             access_key=settings.s3_access_key,
             secret_key=settings.s3_secret_key,
-            secure=False  # HTTP for local development
+            secure=False,  # HTTP for local development
+            region=""  # No region for local MinIO
         )
         self.bucket_name = settings.s3_bucket
         self._ensure_bucket_exists()
@@ -77,26 +81,35 @@ class MinIOClient:
         except S3Error as e:
             raise Exception(f"Failed to download file '{object_name}': {e}")
 
-    def get_file_stream(self, object_name: str) -> BinaryIO:
+    def get_file_stream(self, object_name: str, chunk_size: int = 8 * 1024 * 1024):
         """
-        Get file as stream from MinIO
+        Get file as stream from MinIO with efficient chunking
 
         Args:
             object_name: S3 object key
+            chunk_size: Size of chunks to yield (default 8MB for optimal throughput)
 
-        Returns:
-            BinaryIO: File-like object for streaming
+        Yields:
+            bytes: Chunks of file data
         """
         try:
             response = self.client.get_object(
                 bucket_name=self.bucket_name,
                 object_name=object_name
             )
-            return response
+            try:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                response.close()
+                response.release_conn()
         except S3Error as e:
             raise Exception(f"Failed to get file stream '{object_name}': {e}")
 
-    def get_file_stream_range(self, object_name: str, offset: int = 0, length: int = 0) -> BinaryIO:
+    def get_file_stream_range(self, object_name: str, offset: int = 0, length: int = 0, chunk_size: int = 8 * 1024 * 1024):
         """
         Get partial file as stream from MinIO (for byte-range requests)
 
@@ -104,9 +117,10 @@ class MinIOClient:
             object_name: S3 object key
             offset: Start byte position
             length: Number of bytes to read
+            chunk_size: Size of chunks to yield (default 8MB for optimal throughput)
 
-        Returns:
-            BinaryIO: File-like object for streaming partial content
+        Yields:
+            bytes: Chunks of file data
         """
         try:
             response = self.client.get_object(
@@ -115,7 +129,15 @@ class MinIOClient:
                 offset=offset,
                 length=length
             )
-            return response
+            try:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                response.close()
+                response.release_conn()
         except S3Error as e:
             raise Exception(f"Failed to get file stream range '{object_name}': {e}")
 

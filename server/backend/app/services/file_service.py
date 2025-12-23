@@ -37,7 +37,7 @@ def generate_file_key(filename: str) -> str:
     return key
 
 
-def calculate_file_hash(file_obj: BinaryIO, chunk_size: int = 8192) -> str:
+def calculate_file_hash(file_obj: BinaryIO, chunk_size: int = 1024 * 1024) -> str:
     """
     Calculate SHA-256 hash of file content
 
