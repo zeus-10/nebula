@@ -23,6 +23,7 @@ from .commands.list import list_files
 from .commands.download import download_file
 from .commands.status import show_system_health
 from .commands.play import play_file
+from .commands.transcode import transcode_file, get_transcode_status, list_transcode_jobs, cancel_transcode_job
 
 @app.command()
 def ping():
@@ -85,14 +86,66 @@ def status(
 @app.command()
 def play(
     file_id: int = typer.Argument(..., help="ID of the video file to play"),
-    player: Optional[str] = typer.Option(None, "--player", "-p", help="Media player to use (vlc, mpv)")
+    player: Optional[str] = typer.Option(None, "--player", "-p", help="Media player to use (vlc, mpv)"),
+    quality: Optional[int] = typer.Option(None, "--quality", "-q", help="Stream quality (480, 720, 1080). Uses transcoded version if available.")
 ):
     """
     Stream a video file to VLC or mpv.
 
-    Automatically detects available media player. Supports seeking.
+    Supports seeking. Use --quality to stream a transcoded version.
     """
-    play_file(file_id, player=player)
+    play_file(file_id, player=player, quality=quality)
+
+
+@app.command()
+def transcode(
+    file_id: int = typer.Argument(..., help="ID of the video file to transcode"),
+    qualities: Optional[str] = typer.Option("480,720", "--qualities", "-q", help="Comma-separated list of target qualities (480, 720, 1080)")
+):
+    """
+    Transcode a video to multiple quality levels.
+
+    Creates 480p and 720p versions by default. Runs in background.
+    """
+    quality_list = [int(q.strip()) for q in qualities.split(",")]
+    transcode_file(file_id, qualities=quality_list)
+
+
+@app.command("transcode-status")
+def transcode_status(
+    file_id: int = typer.Argument(..., help="ID of the file to check"),
+    watch: bool = typer.Option(False, "--watch", "-w", help="Continuously watch for updates")
+):
+    """
+    Check transcoding status for a file.
+
+    Shows progress of all transcoding jobs for the file.
+    """
+    get_transcode_status(file_id, watch=watch)
+
+
+@app.command("transcode-jobs")
+def transcode_jobs(
+    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status: pending, processing, completed, failed"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Maximum number of jobs to display")
+):
+    """
+    List all transcoding jobs.
+
+    Shows recent transcoding jobs across all files.
+    """
+    list_transcode_jobs(status=status, limit=limit)
+
+
+@app.command("transcode-cancel")
+def transcode_cancel(
+    job_id: int = typer.Argument(..., help="ID of the transcoding job to cancel")
+):
+    """
+    Cancel a pending or processing transcoding job.
+    """
+    cancel_transcode_job(job_id)
+
 
 # Adding a callback ensures the 'Commands' section is generated
 @app.callback()

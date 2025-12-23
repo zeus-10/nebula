@@ -64,29 +64,50 @@ async def download_file(
 async def stream_file(
     file_id: int,
     request: Request,
+    quality: int = None,
     db: Session = Depends(get_db)
 ):
     """
     Stream a file with byte-range support for video players.
     Supports seeking and partial content delivery (HTTP 206).
+    
+    Optional quality parameter to stream transcoded version (480, 720, 1080).
     """
-    logger.info(f"🎬 STREAM REQUEST - File ID: {file_id}")
+    logger.info(f"STREAM REQUEST - File ID: {file_id}, Quality: {quality or 'original'}")
 
     try:
         # Get file metadata
         file = db.query(File).filter(File.id == file_id).first()
         if not file:
-            logger.warning(f"⚠️ FILE NOT FOUND - ID: {file_id}")
+            logger.warning(f"FILE NOT FOUND - ID: {file_id}")
             raise HTTPException(status_code=404, detail="File not found")
 
+        # Determine which file to stream (original or transcoded)
+        stream_path = file.file_path
         file_size = file.size
+        
+        if quality and file.transcoded_variants:
+            quality_key = str(quality)
+            if quality_key in file.transcoded_variants:
+                stream_path = file.transcoded_variants[quality_key]
+                # Get transcoded file size from MinIO
+                file_info = minio_client.get_file_info(stream_path)
+                if file_info:
+                    file_size = file_info["size"]
+                    logger.info(f"Streaming {quality}p version: {stream_path}")
+                else:
+                    logger.warning(f"Transcoded file not found in storage: {stream_path}")
+                    stream_path = file.file_path
+                    file_size = file.size
+            else:
+                logger.info(f"Quality {quality}p not available, using original")
         
         # Check for Range header
         range_header = request.headers.get("range")
         
         if range_header:
             # Parse range header: "bytes=start-end" or "bytes=start-"
-            logger.info(f"🎯 RANGE REQUEST - {range_header}")
+            logger.info(f"RANGE REQUEST - {range_header}")
             
             try:
                 range_spec = range_header.replace("bytes=", "")
@@ -112,11 +133,11 @@ async def stream_file(
                 
                 content_length = end - start + 1
                 
-                logger.info(f"📊 RANGE: bytes {start}-{end}/{file_size} ({content_length} bytes)")
+                logger.info(f"RANGE: bytes {start}-{end}/{file_size} ({content_length} bytes)")
                 
                 # Get partial file stream from MinIO
                 file_stream = minio_client.get_file_stream_range(
-                    file.file_path, 
+                    stream_path, 
                     offset=start, 
                     length=content_length
                 )
@@ -134,13 +155,13 @@ async def stream_file(
                 )
                 
             except ValueError as e:
-                logger.warning(f"⚠️ INVALID RANGE - {range_header}: {e}")
+                logger.warning(f"INVALID RANGE - {range_header}: {e}")
                 # Fall through to full file response
         
         # No range header or invalid range - return full file
-        logger.info(f"📦 FULL FILE REQUEST - {file.filename} ({file_size} bytes)")
+        logger.info(f"FULL FILE REQUEST - {file.filename} ({file_size} bytes)")
         
-        file_stream = minio_client.get_file_stream(file.file_path)
+        file_stream = minio_client.get_file_stream(stream_path)
         
         return StreamingResponse(
             file_stream,
@@ -154,5 +175,5 @@ async def stream_file(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ STREAM FAILED - File ID: {file_id}, Error: {str(e)}", exc_info=True)
+        logger.error(f"STREAM FAILED - File ID: {file_id}, Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Stream failed: {str(e)}")

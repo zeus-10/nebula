@@ -6,11 +6,15 @@
 # Data directories
 data/
 
-# Environment files
+# Environment files (ignore actual .env files, but keep .example files)
 .env
 .env.local
 .env.production
 .env.staging
+.env.client
+.env.*
+!.env.example
+!.env.client.example
 
 # IDE
 .vscode/
@@ -95,3 +99,4 @@ nebula_cli_env/
 # Local scripts and tools
 nebula
 
+client/cli/.env.client
