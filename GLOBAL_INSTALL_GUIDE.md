@@ -337,3 +337,4 @@ wsl -e bash -c "cd /home/abhinav/dev/nebula/client/cli && source /home/abhinav/d
 **For Both:**
 - You can use both! PowerShell function for Windows, wrapper script for WSL terminal
 
+

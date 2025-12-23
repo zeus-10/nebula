@@ -15,7 +15,44 @@ load_dotenv(env_path)
 app = typer.Typer(help="Nebula Cloud CLI", no_args_is_help=True)
 console = Console()
 
-SERVER_URL = os.getenv("NEBULA_SERVER_URL")
+
+def get_server_url() -> str:
+    """
+    Auto-detect best server URL.
+    Priority: NEBULA_SERVER_URL > NEBULA_LOCAL_URL (if reachable) > NEBULA_REMOTE_URL
+    """
+    # If explicit URL is set, use it
+    explicit_url = os.getenv("NEBULA_SERVER_URL")
+    if explicit_url:
+        return explicit_url
+    
+    local_url = os.getenv("NEBULA_LOCAL_URL")
+    remote_url = os.getenv("NEBULA_REMOTE_URL")
+    
+    # If only one is configured, use it
+    if local_url and not remote_url:
+        return local_url
+    if remote_url and not local_url:
+        return remote_url
+    
+    # If both are configured, try local first with quick timeout
+    if local_url and remote_url:
+        try:
+            response = requests.get(f"{local_url}/health", timeout=1.5)
+            if response.status_code == 200:
+                console.print("[dim]🏠 Using LOCAL network (fast)[/dim]")
+                return local_url
+        except Exception:
+            pass
+        console.print("[dim]🌐 Using REMOTE/Tailscale[/dim]")
+        return remote_url
+    
+    # Fallback
+    return "http://localhost:8000"
+
+
+# Get the best available server URL
+SERVER_URL = get_server_url()
 
 # Import commands
 from .commands.upload import upload_file
@@ -25,6 +62,7 @@ from .commands.status import show_system_health
 from .commands.play import play_file
 from .commands.transcode import transcode_file, get_transcode_status, list_transcode_jobs, cancel_transcode_job
 from .commands.system import show_logs, restart_service, show_container_status
+from .commands.benchmark import run_benchmark
 
 @app.command()
 def ping():
@@ -182,6 +220,23 @@ def containers():
     Displays running state of api, worker, db, s3, and queue containers.
     """
     show_container_status()
+
+
+@app.command()
+def benchmark(
+    file_path: str = typer.Argument(..., help="Path to video file to benchmark"),
+    server_url: Optional[str] = typer.Option(None, "--server", "-s", help="Nebula server URL (uses NEBULA_SERVER_URL env var if not specified)"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Save results to JSON file"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
+    skip_transcode: bool = typer.Option(False, "--skip-transcode", help="Skip transcoding benchmark (faster)")
+):
+    """
+    Run comprehensive performance benchmark.
+
+    Tests upload, download, streaming, and transcoding performance.
+    Measures throughput, latency, and identifies bottlenecks.
+    """
+    run_benchmark(file_path=file_path, server_url=server_url, output=output, verbose=verbose, skip_transcode=skip_transcode)
 
 
 # Adding a callback ensures the 'Commands' section is generated
