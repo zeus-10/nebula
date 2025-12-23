@@ -5,12 +5,14 @@ FROM python:3.10-slim
 # Install system dependencies
 # ffmpeg: For video processing
 # libpq-dev: For Postgres connection
+# docker.io: Docker CLI for system management commands
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsm6 \
     libxext6 \
     libpq-dev \
     gcc \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

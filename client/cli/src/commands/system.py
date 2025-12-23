@@ -14,15 +14,17 @@ SERVER_URL = os.getenv("NEBULA_SERVER_URL")
 VALID_SERVICES = ["api", "worker", "db", "s3", "queue"]
 
 
-def show_logs(service: Optional[str] = None, lines: int = 100):
+def show_logs(service: Optional[str] = None, lines: int = 100, server_url: Optional[str] = None):
     """
     Show logs for a service or all services.
     
     Args:
         service: Service name (api, worker, db, s3, queue) or None for all
         lines: Number of log lines to fetch
+        server_url: Server URL (defaults to NEBULA_SERVER_URL env var)
     """
-    if not SERVER_URL:
+    server_url = server_url or SERVER_URL
+    if not server_url:
         console.print("[red]Error: NEBULA_SERVER_URL environment variable not set[/red]")
         return
 
@@ -36,7 +38,7 @@ def show_logs(service: Optional[str] = None, lines: int = 100):
             
             console.print(f"[cyan]Fetching logs for {service}...[/cyan]")
             response = requests.get(
-                f"{SERVER_URL}/api/system/logs/{service}",
+                f"{server_url}/api/system/logs/{service}",
                 params={"lines": lines},
                 timeout=30
             )
@@ -54,7 +56,7 @@ def show_logs(service: Optional[str] = None, lines: int = 100):
             # All services logs
             console.print(f"[cyan]Fetching logs for all services...[/cyan]")
             response = requests.get(
-                f"{SERVER_URL}/api/system/logs",
+                f"{server_url}/api/system/logs",
                 params={"lines": min(lines, 50)},  # Limit per service when fetching all
                 timeout=60
             )
@@ -74,20 +76,22 @@ def show_logs(service: Optional[str] = None, lines: int = 100):
     except requests.exceptions.Timeout:
         console.print("[red]Error: Request timed out[/red]")
     except requests.exceptions.ConnectionError:
-        console.print(f"[red]Error: Cannot connect to server at {SERVER_URL}[/red]")
+        console.print(f"[red]Error: Cannot connect to server at {server_url}[/red]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
 
 
-def restart_service(service: Optional[str] = None, force: bool = False):
+def restart_service(service: Optional[str] = None, force: bool = False, server_url: Optional[str] = None):
     """
     Restart a service or all services.
     
     Args:
         service: Service name (api, worker, db, s3, queue) or None for all
         force: Skip confirmation prompt
+        server_url: Server URL (defaults to NEBULA_SERVER_URL env var)
     """
-    if not SERVER_URL:
+    server_url = server_url or SERVER_URL
+    if not server_url:
         console.print("[red]Error: NEBULA_SERVER_URL environment variable not set[/red]")
         return
 
@@ -107,7 +111,7 @@ def restart_service(service: Optional[str] = None, force: bool = False):
             
             console.print(f"[cyan]Restarting {service}...[/cyan]")
             response = requests.post(
-                f"{SERVER_URL}/api/system/restart/{service}",
+                f"{server_url}/api/system/restart/{service}",
                 timeout=120
             )
             
@@ -125,7 +129,7 @@ def restart_service(service: Optional[str] = None, force: bool = False):
             
             console.print("[cyan]Restarting all services...[/cyan]")
             response = requests.post(
-                f"{SERVER_URL}/api/system/restart",
+                f"{server_url}/api/system/restart",
                 timeout=300
             )
             
@@ -160,18 +164,22 @@ def restart_service(service: Optional[str] = None, force: bool = False):
         console.print(f"[red]Error: {e}[/red]")
 
 
-def show_container_status():
+def show_container_status(server_url: Optional[str] = None):
     """
     Show status of all Docker containers.
+    
+    Args:
+        server_url: Server URL (defaults to NEBULA_SERVER_URL env var)
     """
-    if not SERVER_URL:
+    server_url = server_url or SERVER_URL
+    if not server_url:
         console.print("[red]Error: NEBULA_SERVER_URL environment variable not set[/red]")
         return
 
     try:
         console.print("[cyan]Checking container status...[/cyan]")
         response = requests.get(
-            f"{SERVER_URL}/api/system/status",
+            f"{server_url}/api/system/status",
             timeout=15
         )
         
@@ -204,7 +212,7 @@ def show_container_status():
     except requests.exceptions.Timeout:
         console.print("[red]Error: Request timed out[/red]")
     except requests.exceptions.ConnectionError:
-        console.print(f"[red]Error: Cannot connect to server at {SERVER_URL}[/red]")
+        console.print(f"[red]Error: Cannot connect to server at {server_url}[/red]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
 

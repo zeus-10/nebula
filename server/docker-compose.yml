@@ -50,7 +50,9 @@ services:
     volumes:
       - ./backend:/app
       # Map host battery info (Read-Only)
-      - /sys/class/power_supply:/host_power:ro 
+      - /sys/class/power_supply:/host_power:ro
+      # Docker socket for system commands (logs, restart, status)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - db
       - queue
