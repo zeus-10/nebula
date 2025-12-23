@@ -81,16 +81,28 @@ def download_file(
 
         try:
             # Prefer presigned download URL (bypass API for data path). Fallback to /download.
-            download_url = f"{server_url}/api/files/{file_id}/download"
+            proxy_url = f"{server_url}/api/files/{file_id}/download"
+            download_url = proxy_url
+            used_presigned = False
             try:
+                # Determine whether we should request local vs remote presign, using the same
+                # "local if reachable else remote" pattern from the CLI main URL selection.
+                # Prefer explicit match to env URLs, otherwise infer from server_url hostname.
                 local_url = os.getenv("NEBULA_LOCAL_URL", "").strip().rstrip("/")
                 remote_url = os.getenv("NEBULA_REMOTE_URL", "").strip().rstrip("/")
                 current = (server_url or "").strip().rstrip("/")
+
                 network = None
                 if local_url and current == local_url:
                     network = "local"
                 elif remote_url and current == remote_url:
                     network = "remote"
+                else:
+                    host = urlparse(current).hostname or ""
+                    if host.startswith("100.") or host.startswith("fd7a:"):
+                        network = "remote"
+                    elif host.startswith("192.168.") or host.startswith("10.") or host.startswith("172."):
+                        network = "local"
 
                 with httpx.Client(timeout=10.0) as client:
                     presign_url = f"{server_url}/api/files/{file_id}/download-url"
@@ -107,39 +119,49 @@ def download_file(
                                 pass
                             else:
                                 download_url = candidate
+                                used_presigned = True
                                 console.print("[dim]⚡ Using direct MinIO download (presigned URL)[/dim]")
             except Exception:
                 # Silent fallback
                 pass
 
-            with httpx.Client(timeout=7200.0) as client:  # 2 hour timeout for large files
-                with client.stream(
-                    'GET',
-                    download_url
-                ) as response:
-                    response.raise_for_status()
+            def _stream_to_file(url: str):
+                with httpx.Client(timeout=7200.0) as client:  # 2 hour timeout for large files
+                    with client.stream('GET', url) as response:
+                        response.raise_for_status()
 
-                    # Get total size from response headers
-                    total_size = int(response.headers.get('content-length', file_info['size']))
+                        # Get total size from response headers
+                        total_size = int(response.headers.get('content-length', file_info['size']))
 
-                    # Create progress bar
-                    with Progress(
-                        BarColumn(),
-                        "[progress.percentage]{task.percentage:>3.0f}%",
-                        DownloadColumn(),
-                        TransferSpeedColumn(),
-                        TimeRemainingColumn(),
-                        console=console
-                    ) as progress:
-                        task = progress.add_task("Downloading...", total=total_size)
+                        # Create progress bar
+                        with Progress(
+                            BarColumn(),
+                            "[progress.percentage]{task.percentage:>3.0f}%",
+                            DownloadColumn(),
+                            TransferSpeedColumn(),
+                            TimeRemainingColumn(),
+                            console=console
+                        ) as progress:
+                            task = progress.add_task("Downloading...", total=total_size)
 
-                        # Download and save file
-                        with open(download_target, 'wb') as f:
-                            downloaded = 0
-                            for chunk in response.iter_bytes(chunk_size=1024 * 1024):
-                                f.write(chunk)
-                                downloaded += len(chunk)
-                                progress.update(task, completed=downloaded)
+                            # Download and save file
+                            with open(download_target, 'wb') as f:
+                                downloaded = 0
+                                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                                    f.write(chunk)
+                                    downloaded += len(chunk)
+                                    progress.update(task, completed=downloaded)
+
+            try:
+                _stream_to_file(download_url)
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+                # If direct MinIO URL isn't reachable from this client (common when remote),
+                # fall back to API-proxied download so the user flow still works.
+                if used_presigned:
+                    console.print(f"[yellow]⚠️  Direct MinIO download failed ({e}). Falling back to API download...[/yellow]")
+                    _stream_to_file(proxy_url)
+                else:
+                    raise
 
             # If we used temp file, copy to final destination
             if use_temp and temp_file and temp_file.exists():
