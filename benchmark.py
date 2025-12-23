@@ -2,285 +2,294 @@
 """
 Nebula Performance Benchmark Script
 
-Measures upload, download, streaming, and transcoding performance for Nebula Cloud.
+Orchestrates existing CLI commands to measure upload, download, streaming, and transcoding performance.
 
 Usage:
+    nebula benchmark /path/to/video.mp4
     python benchmark.py /path/to/video.mp4 --server http://localhost:8000
 
 Requirements:
     - Python 3.7+
-    - requests
-    - tqdm (for progress bars)
-    - Install: pip install requests tqdm
+    - requests, tqdm (pip install requests tqdm)
+    - nebula CLI installed
 """
 
 import argparse
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
-from pathlib import Path
-from typing import Dict, Any, Optional
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, Any, Optional, Tuple
 
-import requests
-from tqdm import tqdm
+try:
+    import requests
+    from tqdm import tqdm
+except ImportError:
+    print("❌ Missing required packages. Install with: pip install requests tqdm")
+    sys.exit(1)
 
 
 class NebulaBenchmark:
+    """Orchestrates Nebula CLI commands and measures performance"""
+
     def __init__(self, server_url: str, verbose: bool = False):
         self.server_url = server_url.rstrip('/')
-        self.session = requests.Session()
         self.verbose = verbose
-        self.uploaded_file_id = None
+        self.session = requests.Session()
 
     def log(self, message: str):
         if self.verbose:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 
-    def measure_operation(self, operation_name: str, func, *args, **kwargs) -> Dict[str, Any]:
-        """Measure execution time and throughput of an operation"""
-        self.log(f"Starting {operation_name}...")
+    def get_file_info(self, file_path: str) -> Dict[str, Any]:
+        """Get local file metadata"""
+        path = Path(file_path)
+        size_bytes = path.stat().st_size
+        return {
+            'path': str(path.absolute()),
+            'filename': path.name,
+            'size_bytes': size_bytes,
+            'size_mb': size_bytes / (1024 * 1024)
+        }
+
+    def prepare_file(self, file_path: str) -> Tuple[str, Optional[str]]:
+        """
+        Prepare file for benchmarking - copy from /mnt/c/ to Linux temp if needed.
+        Returns (actual_path, temp_path_to_cleanup)
+        """
+        if file_path.startswith('/mnt/'):
+            self.log("WSL optimization: Copying file to Linux filesystem...")
+            temp_dir = tempfile.gettempdir()
+            temp_path = os.path.join(temp_dir, f"nebula_bench_{os.getpid()}_{Path(file_path).name}")
+            
+            print(f"📋 Copying file from Windows to Linux temp (faster I/O)...")
+            start = time.time()
+            shutil.copy2(file_path, temp_path)
+            copy_time = time.time() - start
+            print(f"   Copied in {copy_time:.1f}s")
+            
+            return temp_path, temp_path
+        return file_path, None
+
+    def run_command(self, cmd: list, description: str, timeout: int = 600) -> Dict[str, Any]:
+        """Run a CLI command and measure its execution time"""
+        self.log(f"Running: {' '.join(cmd)}")
+        
         start_time = time.time()
-
         try:
-            result = func(*args, **kwargs)
-            end_time = time.time()
-            duration = end_time - start_time
-
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            duration = time.time() - start_time
+            
             return {
-                'operation': operation_name,
+                'success': result.returncode == 0,
                 'duration_seconds': duration,
-                'success': True,
-                'result': result
+                'stdout': result.stdout,
+                'stderr': result.stderr,
+                'returncode': result.returncode
+            }
+        except subprocess.TimeoutExpired:
+            duration = time.time() - start_time
+            return {
+                'success': False,
+                'duration_seconds': duration,
+                'error': f'Timeout after {timeout}s'
             }
         except Exception as e:
-            end_time = time.time()
-            duration = end_time - start_time
-
+            duration = time.time() - start_time
             return {
-                'operation': operation_name,
-                'duration_seconds': duration,
                 'success': False,
+                'duration_seconds': duration,
                 'error': str(e)
             }
 
-    def get_file_info(self, file_path: str) -> Dict[str, Any]:
-        """Get file metadata"""
-        path = Path(file_path)
-        size_bytes = path.stat().st_size
-        size_mb = size_bytes / (1024 * 1024)
-
-        return {
-            'path': str(path),
-            'filename': path.name,
-            'size_bytes': size_bytes,
-            'size_mb': size_mb
-        }
-
-    def upload_file(self, file_path: str) -> Dict[str, Any]:
-        """Upload file and measure performance"""
+    def benchmark_upload(self, file_path: str) -> Dict[str, Any]:
+        """Benchmark upload using nebula CLI"""
         file_info = self.get_file_info(file_path)
-
-        url = f"{self.server_url}/api/upload"
-        self.log(f"Uploading {file_info['filename']} ({file_info['size_mb']:.1f} MB)...")
-
-        with open(file_path, 'rb') as f:
-            files = {'file': (file_info['filename'], f, 'application/octet-stream')}
-            response = self.session.post(url, files=files)
-
-        if response.status_code != 200:
-            raise Exception(f"Upload failed: HTTP {response.status_code} - {response.text}")
-
-        result = response.json()
-        self.uploaded_file_id = result['file']['id']
-
-        # Calculate throughput
-        throughput_mbps = (file_info['size_mb'] * 8) / self.current_measurement['duration_seconds']
-
+        print(f"\n📤 UPLOAD BENCHMARK")
+        print(f"   File: {file_info['filename']} ({file_info['size_mb']:.1f} MB)")
+        
+        cmd = ['nebula', 'upload', file_path, '--description', 'Benchmark test file']
+        result = self.run_command(cmd, "Upload", timeout=1800)  # 30 min timeout
+        
+        # Parse file ID from output
+        file_id = None
+        if result['success'] and result.get('stdout'):
+            match = re.search(r'File ID:\s*(\d+)', result['stdout'])
+            if match:
+                file_id = int(match.group(1))
+        
+        throughput = (file_info['size_mb'] * 8) / result['duration_seconds'] if result['duration_seconds'] > 0 else 0
+        
         return {
-            'file_id': self.uploaded_file_id,
-            'throughput_mbps': throughput_mbps,
-            'response': result
-        }
-
-    def download_file(self, file_id: int) -> Dict[str, Any]:
-        """Download file and measure performance"""
-        url = f"{self.server_url}/api/files/{file_id}/download"
-
-        # Get file info first to calculate expected size
-        info_response = self.session.get(f"{self.server_url}/api/files/{file_id}")
-        if info_response.status_code != 200:
-            raise Exception(f"Could not get file info: HTTP {info_response.status_code}")
-
-        file_info = info_response.json()
-        expected_size = file_info['size']
-        expected_mb = expected_size / (1024 * 1024)
-
-        self.log(f"Downloading {expected_mb:.1f} MB...")
-
-        response = self.session.get(url, stream=True)
-        if response.status_code != 200:
-            raise Exception(f"Download failed: HTTP {response.status_code}")
-
-        # Download with progress
-        downloaded = 0
-        with tqdm(total=expected_size, unit='B', unit_scale=True, desc="Downloading") as pbar:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    downloaded += len(chunk)
-                    pbar.update(len(chunk))
-
-        if downloaded != expected_size:
-            raise Exception(f"Download incomplete: got {downloaded} bytes, expected {expected_size}")
-
-        # Calculate throughput
-        throughput_mbps = (expected_mb * 8) / self.current_measurement['duration_seconds']
-
-        return {
-            'bytes_downloaded': downloaded,
-            'throughput_mbps': throughput_mbps
-        }
-
-    def stream_file(self, file_id: int, range_header: Optional[str] = None) -> Dict[str, Any]:
-        """Stream file and measure performance"""
-        url = f"{self.server_url}/api/files/{file_id}/stream"
-        headers = {}
-        if range_header:
-            headers['Range'] = range_header
-            operation_type = f"stream_range_{range_header}"
-        else:
-            operation_type = "stream_full"
-
-        # Get expected content length
-        if range_header:
-            # For range requests, we need to make a HEAD request first
-            head_response = self.session.head(url, headers={'Range': range_header})
-            if head_response.status_code != 206:
-                raise Exception(f"Range request failed: HTTP {head_response.status_code}")
-            expected_size = int(head_response.headers.get('Content-Length', 0))
-        else:
-            # For full stream, get from file info
-            info_response = self.session.get(f"{self.server_url}/api/files/{file_id}")
-            file_info = info_response.json()
-            expected_size = file_info['size']
-
-        expected_mb = expected_size / (1024 * 1024)
-
-        self.log(f"Streaming {expected_mb:.1f} MB ({operation_type})...")
-
-        response = self.session.get(url, headers=headers, stream=True)
-        if response.status_code not in [200, 206]:
-            raise Exception(f"Stream failed: HTTP {response.status_code}")
-
-        # Stream with progress
-        downloaded = 0
-        with tqdm(total=expected_size, unit='B', unit_scale=True, desc=f"Streaming ({operation_type})") as pbar:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    downloaded += len(chunk)
-                    pbar.update(len(chunk))
-
-        throughput_mbps = (expected_mb * 8) / self.current_measurement['duration_seconds']
-
-        return {
-            'bytes_streamed': downloaded,
-            'throughput_mbps': throughput_mbps,
-            'status_code': response.status_code,
-            'content_range': response.headers.get('Content-Range')
-        }
-
-    def transcode_file(self, file_id: int, qualities: list = None) -> Dict[str, Any]:
-        """Trigger transcoding and measure performance"""
-        if qualities is None:
-            qualities = [480, 720]
-
-        url = f"{self.server_url}/api/transcode"
-        payload = {
+            'operation': 'upload',
+            'success': result['success'],
             'file_id': file_id,
-            'qualities': qualities
+            'size_mb': file_info['size_mb'],
+            'duration_seconds': result['duration_seconds'],
+            'throughput_mbps': throughput,
+            'error': result.get('error')
         }
 
-        self.log(f"Triggering transcoding to {qualities}...")
-
-        response = self.session.post(url, json=payload)
-        if response.status_code != 200:
-            raise Exception(f"Transcode trigger failed: HTTP {response.status_code} - {response.text}")
-
-        result = response.json()
-        job_ids = [job['job_id'] for job in result.get('jobs', [])]
-
-        self.log(f"Created {len(job_ids)} transcoding jobs: {job_ids}")
-
+    def benchmark_download(self, file_id: int, file_size_mb: float) -> Dict[str, Any]:
+        """Benchmark download using nebula CLI"""
+        print(f"\n📥 DOWNLOAD BENCHMARK")
+        print(f"   File ID: {file_id}")
+        
+        # Download to temp directory
+        temp_dir = tempfile.gettempdir()
+        output_path = os.path.join(temp_dir, f"nebula_bench_download_{file_id}.tmp")
+        
+        cmd = ['nebula', 'download', str(file_id), '-o', output_path]
+        result = self.run_command(cmd, "Download", timeout=1800)
+        
+        # Clean up downloaded file
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        
+        throughput = (file_size_mb * 8) / result['duration_seconds'] if result['duration_seconds'] > 0 else 0
+        
         return {
-            'job_ids': job_ids,
-            'qualities': qualities,
-            'response': result
+            'operation': 'download',
+            'success': result['success'],
+            'size_mb': file_size_mb,
+            'duration_seconds': result['duration_seconds'],
+            'throughput_mbps': throughput,
+            'error': result.get('error')
         }
 
-    def wait_for_transcode_completion(self, job_ids: list, timeout_seconds: int = 3600) -> Dict[str, Any]:
-        """Wait for transcoding jobs to complete and measure performance"""
-        start_time = time.time()
-        completed_jobs = {}
-        failed_jobs = {}
-
-        self.log(f"Waiting for {len(job_ids)} jobs to complete...")
-
-        with tqdm(total=len(job_ids), desc="Transcoding") as pbar:
-            while len(completed_jobs) + len(failed_jobs) < len(job_ids):
-                if time.time() - start_time > timeout_seconds:
-                    raise Exception(f"Transcode timeout after {timeout_seconds} seconds")
-
-                for job_id in job_ids:
-                    if job_id in completed_jobs or job_id in failed_jobs:
-                        continue
-
-                    try:
-                        response = self.session.get(f"{self.server_url}/api/transcode/job/{job_id}")
-                        if response.status_code != 200:
-                            continue
-
-                        job_data = response.json()
-                        status = job_data['status']
-
-                        if status == 'completed':
-                            completed_jobs[job_id] = job_data
-                            pbar.update(1)
-                        elif status == 'failed':
-                            failed_jobs[job_id] = job_data
-                            pbar.update(1)
-
-                    except Exception as e:
-                        self.log(f"Error checking job {job_id}: {e}")
-                        continue
-
-                time.sleep(2)  # Poll every 2 seconds
-
-        total_duration = time.time() - start_time
-
-        # Calculate performance metrics
-        if completed_jobs:
-            avg_completion_time = sum(
-                (datetime.fromisoformat(job['completed_at'].replace('Z', '+00:00')) -
-                 datetime.fromisoformat(job['started_at'].replace('Z', '+00:00'))).total_seconds()
-                for job in completed_jobs.values()
-            ) / len(completed_jobs)
-
-            total_output_size = sum(job.get('output_size', 0) for job in completed_jobs.values())
+    def benchmark_stream(self, file_id: int, file_size_mb: float, range_bytes: Optional[int] = None) -> Dict[str, Any]:
+        """Benchmark streaming by fetching data via HTTP (no player)"""
+        if range_bytes:
+            print(f"\n🎬 STREAM BENCHMARK (Range: {range_bytes/(1024*1024):.1f} MB)")
+            headers = {'Range': f'bytes=0-{range_bytes}'}
+            expected_mb = range_bytes / (1024 * 1024)
+            op_name = 'stream_range'
         else:
-            avg_completion_time = 0
-            total_output_size = 0
+            print(f"\n🎬 STREAM BENCHMARK (Full file)")
+            headers = {}
+            expected_mb = file_size_mb
+            op_name = 'stream_full'
+        
+        url = f"{self.server_url}/api/files/{file_id}/stream"
+        
+        try:
+            start_time = time.time()
+            
+            response = self.session.get(url, headers=headers, stream=True, timeout=1800)
+            if response.status_code not in [200, 206]:
+                raise Exception(f"HTTP {response.status_code}")
+            
+            # Stream and discard data (measuring throughput)
+            downloaded = 0
+            content_length = int(response.headers.get('Content-Length', 0))
+            
+            with tqdm(total=content_length, unit='B', unit_scale=True, desc="Streaming") as pbar:
+                for chunk in response.iter_content(chunk_size=65536):  # 64KB chunks
+                    if chunk:
+                        downloaded += len(chunk)
+                        pbar.update(len(chunk))
+            
+            duration = time.time() - start_time
+            actual_mb = downloaded / (1024 * 1024)
+            throughput = (actual_mb * 8) / duration if duration > 0 else 0
+            
+            return {
+                'operation': op_name,
+                'success': True,
+                'size_mb': actual_mb,
+                'duration_seconds': duration,
+                'throughput_mbps': throughput,
+                'status_code': response.status_code
+            }
+            
+        except Exception as e:
+            return {
+                'operation': op_name,
+                'success': False,
+                'error': str(e),
+                'duration_seconds': 0,
+                'throughput_mbps': 0
+            }
 
+    def benchmark_transcode(self, file_id: int, qualities: list = None) -> Dict[str, Any]:
+        """Benchmark transcoding - trigger and wait for completion"""
+        if qualities is None:
+            qualities = [480]  # Just 480p for quick benchmark
+        
+        print(f"\n🎥 TRANSCODE BENCHMARK")
+        print(f"   File ID: {file_id}, Qualities: {qualities}")
+        
+        # Trigger transcoding via CLI
+        quality_str = ','.join(map(str, qualities))
+        cmd = ['nebula', 'transcode', str(file_id), '-q', quality_str]
+        trigger_result = self.run_command(cmd, "Transcode trigger", timeout=30)
+        
+        if not trigger_result['success']:
+            return {
+                'operation': 'transcode',
+                'success': False,
+                'error': trigger_result.get('error', 'Failed to trigger transcoding'),
+                'duration_seconds': trigger_result['duration_seconds']
+            }
+        
+        # Poll for completion
+        print("   Waiting for transcoding to complete...")
+        start_time = time.time()
+        timeout = 3600  # 1 hour max
+        
+        while time.time() - start_time < timeout:
+            try:
+                response = self.session.get(f"{self.server_url}/api/transcode/{file_id}", timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    jobs = data.get('jobs', [])
+                    
+                    # Check if all jobs are done
+                    pending = [j for j in jobs if j['status'] in ['pending', 'processing']]
+                    completed = [j for j in jobs if j['status'] == 'completed']
+                    failed = [j for j in jobs if j['status'] == 'failed']
+                    
+                    if not pending:
+                        duration = time.time() - start_time
+                        return {
+                            'operation': 'transcode',
+                            'success': len(failed) == 0,
+                            'duration_seconds': duration,
+                            'completed_jobs': len(completed),
+                            'failed_jobs': len(failed),
+                            'qualities': qualities
+                        }
+                    
+                    # Show progress
+                    for job in jobs:
+                        if job['status'] == 'processing':
+                            print(f"   {job['target_quality']}p: {job.get('progress', 0):.0f}%", end='\r')
+                
+                time.sleep(5)
+                
+            except Exception as e:
+                self.log(f"Error polling transcode status: {e}")
+                time.sleep(5)
+        
         return {
-            'total_duration_seconds': total_duration,
-            'completed_jobs': len(completed_jobs),
-            'failed_jobs': len(failed_jobs),
-            'avg_completion_time_seconds': avg_completion_time,
-            'total_output_size_mb': total_output_size / (1024 * 1024) if total_output_size else 0,
-            'jobs_details': {**completed_jobs, **failed_jobs}
+            'operation': 'transcode',
+            'success': False,
+            'error': 'Timeout waiting for transcoding',
+            'duration_seconds': time.time() - start_time
         }
 
-    def run_full_benchmark(self, file_path: str) -> Dict[str, Any]:
+    def run_full_benchmark(self, file_path: str, skip_transcode: bool = False) -> Dict[str, Any]:
         """Run complete benchmark suite"""
         results = {
             'timestamp': datetime.now().isoformat(),
@@ -288,185 +297,164 @@ class NebulaBenchmark:
             'file_info': self.get_file_info(file_path),
             'measurements': []
         }
-
+        
+        # Prepare file (WSL optimization)
+        actual_path, temp_path = self.prepare_file(file_path)
+        file_info = self.get_file_info(actual_path)
+        
         try:
-            # 1. Upload
-            upload_result = self.measure_operation('upload', self.upload_file, file_path)
+            # 1. Upload benchmark
+            upload_result = self.benchmark_upload(actual_path)
             results['measurements'].append(upload_result)
-            file_id = upload_result['result']['file_id'] if upload_result['success'] else None
-
-            if not upload_result['success']:
+            
+            if not upload_result['success'] or not upload_result.get('file_id'):
+                print(f"\n❌ Upload failed, cannot continue benchmark")
                 return results
-
-            # 2. Download
-            download_result = self.measure_operation('download', self.download_file, file_id)
+            
+            file_id = upload_result['file_id']
+            file_size_mb = file_info['size_mb']
+            
+            # 2. Download benchmark
+            download_result = self.benchmark_download(file_id, file_size_mb)
             results['measurements'].append(download_result)
-
-            # 3. Stream full file
-            stream_full_result = self.measure_operation('stream_full', self.stream_file, file_id)
+            
+            # 3. Stream full file benchmark
+            stream_full_result = self.benchmark_stream(file_id, file_size_mb)
             results['measurements'].append(stream_full_result)
-
-            # 4. Stream partial range (first 50MB)
-            stream_range_result = self.measure_operation(
-                'stream_range', self.stream_file, file_id, "bytes=0-52428800"
-            )
+            
+            # 4. Stream range benchmark (first 50MB or file size, whichever is smaller)
+            range_bytes = min(50 * 1024 * 1024, int(file_size_mb * 1024 * 1024))
+            stream_range_result = self.benchmark_stream(file_id, file_size_mb, range_bytes)
             results['measurements'].append(stream_range_result)
-
-            # 5. Transcode
-            transcode_trigger_result = self.measure_operation(
-                'transcode_trigger', self.transcode_file, file_id, [480, 720]
-            )
-            results['measurements'].append(transcode_trigger_result)
-
-            if transcode_trigger_result['success']:
-                job_ids = transcode_trigger_result['result']['job_ids']
-                transcode_wait_result = self.measure_operation(
-                    'transcode_wait', self.wait_for_transcode_completion, job_ids
-                )
-                results['measurements'].append(transcode_wait_result)
-
-        except Exception as e:
-            self.log(f"Benchmark failed: {e}")
-            results['error'] = str(e)
-
+            
+            # 5. Transcode benchmark (optional)
+            if not skip_transcode:
+                transcode_result = self.benchmark_transcode(file_id, [480])
+                results['measurements'].append(transcode_result)
+            
+        finally:
+            # Cleanup temp file
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+        
         return results
 
     def print_report(self, results: Dict[str, Any]):
         """Print formatted benchmark report"""
-        print("\n" + "="*80)
+        print("\n" + "=" * 70)
         print("🚀 NEBULA PERFORMANCE BENCHMARK REPORT")
-        print("="*80)
-
+        print("=" * 70)
+        
         file_info = results['file_info']
-        print("\n📁 Test File:")
-        print(f"   Path: {file_info['path']}")
-        print(f"   Size: {file_info['size_mb']:.1f} MB ({file_info['size_bytes']:,} bytes)")
-
-        print(f"\n🔗 Server: {results['server_url']}")
+        print(f"\n📁 Test File: {file_info['filename']}")
+        print(f"   Size: {file_info['size_mb']:.1f} MB")
+        print(f"🔗 Server: {results['server_url']}")
         print(f"📅 Timestamp: {results['timestamp']}")
-
-        if 'error' in results:
-            print(f"\n❌ Benchmark failed: {results['error']}")
-            return
-
-        # Print measurements
-        print("\n📊 PERFORMANCE RESULTS:")
-        print("-" * 60)
-
-        for measurement in results['measurements']:
-            op = measurement['operation']
-            duration = measurement['duration_seconds']
-            success = measurement['success']
-
-            status_icon = "✅" if success else "❌"
-            print(f"\n{status_icon} {op.replace('_', ' ').title()}")
-
-            if success:
-                result = measurement['result']
-
-                if 'throughput_mbps' in result:
-                    print(".1f")
-                if 'bytes_downloaded' in result:
-                    print(f"   Data: {result['bytes_downloaded'] / (1024*1024):.1f} MB")
-                if 'bytes_streamed' in result:
-                    print(f"   Data: {result['bytes_streamed'] / (1024*1024):.1f} MB")
-                if 'job_ids' in result:
-                    print(f"   Jobs: {len(result['job_ids'])} created")
-                if 'completed_jobs' in result:
-                    print(f"   Jobs: {result['completed_jobs']} completed, {result['failed_jobs']} failed")
-                    if result['avg_completion_time_seconds'] > 0:
-                        print(".1f")
-                    if result['total_output_size_mb'] > 0:
-                        print(".1f")
+        
+        print("\n" + "-" * 70)
+        print("📊 RESULTS")
+        print("-" * 70)
+        
+        for m in results['measurements']:
+            op = m['operation'].replace('_', ' ').title()
+            icon = "✅" if m['success'] else "❌"
+            
+            print(f"\n{icon} {op}")
+            
+            if m['success']:
+                if 'throughput_mbps' in m and m['throughput_mbps'] > 0:
+                    print(f"   Throughput: {m['throughput_mbps']:.1f} Mbps")
+                if 'size_mb' in m:
+                    print(f"   Data: {m['size_mb']:.1f} MB")
+                if 'duration_seconds' in m:
+                    print(f"   Duration: {m['duration_seconds']:.2f}s")
+                if 'completed_jobs' in m:
+                    print(f"   Jobs: {m['completed_jobs']} completed, {m.get('failed_jobs', 0)} failed")
             else:
-                print(f"   Error: {measurement.get('error', 'Unknown')}")
-
-            print(".2f")
+                print(f"   Error: {m.get('error', 'Unknown error')}")
+        
         # Summary insights
-        print("\n💡 INSIGHTS:")
-        print("-" * 60)
-
-        measurements = results['measurements']
-
-        # Upload vs Download comparison
-        upload = next((m for m in measurements if m['operation'] == 'upload'), None)
-        download = next((m for m in measurements if m['operation'] == 'download'), None)
-
+        print("\n" + "-" * 70)
+        print("💡 INSIGHTS")
+        print("-" * 70)
+        
+        measurements = {m['operation']: m for m in results['measurements']}
+        
+        upload = measurements.get('upload')
+        download = measurements.get('download')
+        stream = measurements.get('stream_full')
+        
         if upload and download and upload['success'] and download['success']:
-            upload_speed = upload['result']['throughput_mbps']
-            download_speed = download['result']['throughput_mbps']
-            ratio = download_speed / upload_speed if upload_speed > 0 else 0
-
-            print(f"   Upload: {upload_speed:.1f} Mbps | Download: {download_speed:.1f} Mbps | Ratio: {ratio:.2f}")
+            ratio = download['throughput_mbps'] / upload['throughput_mbps'] if upload['throughput_mbps'] > 0 else 0
+            print(f"\n📤 Upload: {upload['throughput_mbps']:.1f} Mbps")
+            print(f"📥 Download: {download['throughput_mbps']:.1f} Mbps")
             if ratio < 0.8:
-                print("   → Upload >> Download: Possible read bottleneck (MinIO/disk)")
-            elif ratio > 1.2:
-                print("   → Download >> Upload: Possible write bottleneck")
-
-        # Stream vs Download comparison
-        stream_full = next((m for m in measurements if m['operation'] == 'stream_full'), None)
-        if download and stream_full and download['success'] and stream_full['success']:
-            download_speed = download['result']['throughput_mbps']
-            stream_speed = stream_full['result']['throughput_mbps']
-            ratio = stream_speed / download_speed if download_speed > 0 else 0
-
-            print(f"   Download: {download_speed:.1f} Mbps | Stream: {stream_speed:.1f} Mbps | Ratio: {ratio:.2f}")
+                print("   → Download slower than upload: Possible server/storage read bottleneck")
+            elif ratio > 1.5:
+                print("   → Download faster: Upload may be network-limited")
+        
+        if download and stream and download['success'] and stream['success']:
+            ratio = stream['throughput_mbps'] / download['throughput_mbps'] if download['throughput_mbps'] > 0 else 0
+            print(f"\n🎬 Stream: {stream['throughput_mbps']:.1f} Mbps")
             if ratio < 0.9:
-                print("   → Streaming slower: Extra overhead in range handling")
-
-        # Transcoding insights
-        transcode_wait = next((m for m in measurements if m['operation'] == 'transcode_wait'), None)
-        if transcode_wait and transcode_wait['success']:
-            result = transcode_wait['result']
-            if result['completed_jobs'] > 0:
-                input_duration_hours = file_info['size_mb'] / (50 * 1024)  # Rough estimate: 50MB/min video
-                processing_time_hours = result['avg_completion_time_seconds'] / 3600
-                speedup = input_duration_hours / processing_time_hours if processing_time_hours > 0 else 0
-
-                print(f"   Processing time: {processing_time_hours:.1f} hours")
-                print(f"   Speedup: {speedup:.1f}x real-time")
-
-        print("\n" + "="*80)
+                print(f"   → Streaming {(1-ratio)*100:.0f}% slower than download: Range handling overhead")
+        
+        print("\n" + "=" * 70)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Benchmark Nebula Cloud performance")
+    parser = argparse.ArgumentParser(
+        description="Benchmark Nebula Cloud performance",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  nebula benchmark /path/to/video.mp4
+  python benchmark.py /path/to/video.mp4 --server http://192.168.1.100:8000
+  python benchmark.py /path/to/video.mp4 --skip-transcode --verbose
+        """
+    )
     parser.add_argument("file_path", help="Path to video file to benchmark")
-    parser.add_argument("--server", default="http://localhost:8000",
-                       help="Nebula server URL (default: http://localhost:8000)")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                       help="Enable verbose logging")
-    parser.add_argument("--output", "-o",
-                       help="Save results to JSON file")
-
+    parser.add_argument("--server", help="Nebula server URL (default: NEBULA_SERVER_URL env var)")
+    parser.add_argument("--skip-transcode", action="store_true", help="Skip transcoding benchmark")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--output", "-o", help="Save results to JSON file")
+    
     args = parser.parse_args()
-
+    
+    # Get server URL
+    server_url = args.server or os.getenv("NEBULA_SERVER_URL", "http://localhost:8000")
+    
+    # Validate file exists
     if not os.path.exists(args.file_path):
         print(f"❌ File not found: {args.file_path}")
         sys.exit(1)
-
-    # Check if required packages are available
-    try:
-        import requests
-        import tqdm
-    except ImportError as e:
-        print(f"❌ Missing required packages: {e}")
-        print("Install with: pip install requests tqdm")
+    
+    # Check nebula CLI is available
+    if not shutil.which("nebula"):
+        print("❌ 'nebula' CLI not found. Make sure it's installed and in PATH.")
         sys.exit(1)
-
+    
     print("🚀 Starting Nebula Performance Benchmark...")
     print(f"📁 File: {args.file_path}")
-    print(f"🔗 Server: {args.server}")
-    print()
-
-    benchmark = NebulaBenchmark(args.server, args.verbose)
-    results = benchmark.run_full_benchmark(args.file_path)
-    benchmark.print_report(results)
-
-    if args.output:
-        with open(args.output, 'w') as f:
-            json.dump(results, f, indent=2, default=str)
-        print(f"💾 Results saved to: {args.output}")
+    print(f"🔗 Server: {server_url}")
+    
+    benchmark = NebulaBenchmark(server_url, args.verbose)
+    
+    try:
+        results = benchmark.run_full_benchmark(args.file_path, skip_transcode=args.skip_transcode)
+        benchmark.print_report(results)
+        
+        if args.output:
+            with open(args.output, 'w') as f:
+                json.dump(results, f, indent=2, default=str)
+            print(f"\n💾 Results saved to: {args.output}")
+            
+    except KeyboardInterrupt:
+        print("\n⚠️ Benchmark interrupted by user")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

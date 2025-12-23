@@ -208,3 +208,4 @@ def show_container_status():
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
 
+

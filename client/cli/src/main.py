@@ -15,7 +15,44 @@ load_dotenv(env_path)
 app = typer.Typer(help="Nebula Cloud CLI", no_args_is_help=True)
 console = Console()
 
-SERVER_URL = os.getenv("NEBULA_SERVER_URL")
+
+def get_server_url() -> str:
+    """
+    Auto-detect best server URL.
+    Priority: NEBULA_SERVER_URL > NEBULA_LOCAL_URL (if reachable) > NEBULA_REMOTE_URL
+    """
+    # If explicit URL is set, use it
+    explicit_url = os.getenv("NEBULA_SERVER_URL")
+    if explicit_url:
+        return explicit_url
+    
+    local_url = os.getenv("NEBULA_LOCAL_URL")
+    remote_url = os.getenv("NEBULA_REMOTE_URL")
+    
+    # If only one is configured, use it
+    if local_url and not remote_url:
+        return local_url
+    if remote_url and not local_url:
+        return remote_url
+    
+    # If both are configured, try local first with quick timeout
+    if local_url and remote_url:
+        try:
+            response = requests.get(f"{local_url}/health", timeout=1.5)
+            if response.status_code == 200:
+                console.print("[dim]🏠 Using LOCAL network (fast)[/dim]")
+                return local_url
+        except Exception:
+            pass
+        console.print("[dim]🌐 Using REMOTE/Tailscale[/dim]")
+        return remote_url
+    
+    # Fallback
+    return "http://localhost:8000"
+
+
+# Get the best available server URL
+SERVER_URL = get_server_url()
 
 # Import commands
 from .commands.upload import upload_file
@@ -25,6 +62,7 @@ from .commands.status import show_system_health
 from .commands.play import play_file
 from .commands.transcode import transcode_file, get_transcode_status, list_transcode_jobs, cancel_transcode_job
 from .commands.system import show_logs, restart_service, show_container_status
+from .commands.benchmark import run_benchmark
 
 @app.command()
 def ping():
@@ -48,7 +86,7 @@ def upload(
     """
     Upload a file to Nebula Cloud
     """
-    upload_file(file_path, description=description)
+    upload_file(file_path, server_url=SERVER_URL, description=description)
 
 @app.command()
 def list(
@@ -58,7 +96,7 @@ def list(
     """
     List all uploaded files with metadata
     """
-    list_files(limit=limit, skip=skip)
+    list_files(server_url=SERVER_URL, limit=limit, skip=skip)
 
 @app.command()
 def download(
@@ -70,7 +108,7 @@ def download(
 
     Preserves original filename if no output path is specified.
     """
-    download_file(file_id, output_path)
+    download_file(file_id, output_path, server_url=SERVER_URL)
 
 @app.command()
 def status(
@@ -82,7 +120,7 @@ def status(
 
     Shows CPU, memory, disk usage, network stats, and server health.
     """
-    show_system_health(show_local=show_local, show_server=show_server)
+    show_system_health(show_local=show_local, show_server=show_server, server_url=SERVER_URL)
 
 @app.command()
 def play(
@@ -95,7 +133,7 @@ def play(
 
     Supports seeking. Use --quality to stream a transcoded version.
     """
-    play_file(file_id, player=player, quality=quality)
+    play_file(file_id, player=player, quality=quality, server_url=SERVER_URL)
 
 
 @app.command()
@@ -109,7 +147,7 @@ def transcode(
     Creates 480p and 720p versions by default. Runs in background.
     """
     quality_list = [int(q.strip()) for q in qualities.split(",")]
-    transcode_file(file_id, qualities=quality_list)
+    transcode_file(file_id, qualities=quality_list, server_url=SERVER_URL)
 
 
 @app.command("transcode-status")
@@ -122,7 +160,7 @@ def transcode_status(
 
     Shows progress of all transcoding jobs for the file.
     """
-    get_transcode_status(file_id, watch=watch)
+    get_transcode_status(file_id, watch=watch, server_url=SERVER_URL)
 
 
 @app.command("transcode-jobs")
@@ -135,7 +173,7 @@ def transcode_jobs(
 
     Shows recent transcoding jobs across all files.
     """
-    list_transcode_jobs(status=status, limit=limit)
+    list_transcode_jobs(status=status, limit=limit, server_url=SERVER_URL)
 
 
 @app.command("transcode-cancel")
@@ -145,7 +183,7 @@ def transcode_cancel(
     """
     Cancel a pending or processing transcoding job.
     """
-    cancel_transcode_job(job_id)
+    cancel_transcode_job(job_id, server_url=SERVER_URL)
 
 
 @app.command()
@@ -158,7 +196,7 @@ def logs(
 
     Shows logs from Docker containers. Specify a service or omit for all.
     """
-    show_logs(service=service, lines=lines)
+    show_logs(service=service, lines=lines, server_url=SERVER_URL)
 
 
 @app.command()
@@ -171,7 +209,7 @@ def restart(
 
     Restart a specific service or all services. Use with caution.
     """
-    restart_service(service=service, force=force)
+    restart_service(service=service, force=force, server_url=SERVER_URL)
 
 
 @app.command()
@@ -181,7 +219,24 @@ def containers():
 
     Displays running state of api, worker, db, s3, and queue containers.
     """
-    show_container_status()
+    show_container_status(server_url=SERVER_URL)
+
+
+@app.command()
+def benchmark(
+    file_path: str = typer.Argument(..., help="Path to video file to benchmark"),
+    server_url: Optional[str] = typer.Option(None, "--server", "-s", help="Nebula server URL (uses NEBULA_SERVER_URL env var if not specified)"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Save results to JSON file"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
+    skip_transcode: bool = typer.Option(False, "--skip-transcode", help="Skip transcoding benchmark (faster)")
+):
+    """
+    Run comprehensive performance benchmark.
+
+    Tests upload, download, streaming, and transcoding performance.
+    Measures throughput, latency, and identifies bottlenecks.
+    """
+    run_benchmark(file_path=file_path, server_url=server_url or SERVER_URL, output=output, verbose=verbose, skip_transcode=skip_transcode)
 
 
 # Adding a callback ensures the 'Commands' section is generated

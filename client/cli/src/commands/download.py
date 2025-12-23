@@ -1,6 +1,8 @@
 # Download command - download files from server
 
 import os
+import shutil
+import tempfile
 import typer
 from pathlib import Path
 from typing import Optional
@@ -49,7 +51,7 @@ def download_file(
             output_file = Path(output_path)
         else:
             # Default download location
-            default_dir = Path("/mnt/c/Users/abhin/OneDrive/Desktop/nebula")
+            default_dir = Path("/mnt/c/Users/abhin/Desktop/nebula")
             default_dir.mkdir(parents=True, exist_ok=True)
             output_file = default_dir / file_info['filename']
 
@@ -61,37 +63,62 @@ def download_file(
                 console.print("[yellow]Download cancelled.[/yellow]")
                 return
 
-        # Download with progress tracking
+        # WSL optimization: Download to Linux temp first, then copy to Windows filesystem
+        # This avoids slow I/O when writing directly to /mnt/c/
+        use_temp = str(output_file).startswith('/mnt/')
+        temp_file = None
+        
+        if use_temp:
+            temp_dir = tempfile.gettempdir()
+            temp_file = Path(temp_dir) / f"nebula_download_{os.getpid()}_{file_info['filename']}"
+            download_target = temp_file
+            console.print(f"[dim]WSL optimization: Downloading to Linux temp first...[/dim]")
+        else:
+            download_target = output_file
+
         console.print(f"[yellow]🚀 Downloading to {output_file.absolute()}...[/yellow]")
 
-        with httpx.Client(timeout=7200.0) as client:  # 2 hour timeout for large files
-            with client.stream(
-                'GET',
-                f"{server_url}/api/files/{file_id}/download"
-            ) as response:
-                response.raise_for_status()
+        try:
+            with httpx.Client(timeout=7200.0) as client:  # 2 hour timeout for large files
+                with client.stream(
+                    'GET',
+                    f"{server_url}/api/files/{file_id}/download"
+                ) as response:
+                    response.raise_for_status()
 
-                # Get total size from response headers
-                total_size = int(response.headers.get('content-length', file_info['size']))
+                    # Get total size from response headers
+                    total_size = int(response.headers.get('content-length', file_info['size']))
 
-                # Create progress bar
-                with Progress(
-                    BarColumn(),
-                    "[progress.percentage]{task.percentage:>3.0f}%",
-                    DownloadColumn(),
-                    TransferSpeedColumn(),
-                    TimeRemainingColumn(),
-                    console=console
-                ) as progress:
-                    task = progress.add_task("Downloading...", total=total_size)
+                    # Create progress bar
+                    with Progress(
+                        BarColumn(),
+                        "[progress.percentage]{task.percentage:>3.0f}%",
+                        DownloadColumn(),
+                        TransferSpeedColumn(),
+                        TimeRemainingColumn(),
+                        console=console
+                    ) as progress:
+                        task = progress.add_task("Downloading...", total=total_size)
 
-                    # Download and save file
-                    with open(output_file, 'wb') as f:
-                        downloaded = 0
-                        for chunk in response.iter_bytes(chunk_size=8192):
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            progress.update(task, completed=downloaded)
+                        # Download and save file
+                        with open(download_target, 'wb') as f:
+                            downloaded = 0
+                            for chunk in response.iter_bytes(chunk_size=8192):
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                progress.update(task, completed=downloaded)
+
+            # If we used temp file, copy to final destination
+            if use_temp and temp_file and temp_file.exists():
+                console.print(f"[dim]Copying to Windows filesystem...[/dim]")
+                shutil.copy2(temp_file, output_file)
+        finally:
+            # Clean up temp file
+            if temp_file and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except Exception:
+                    pass
 
         # Verify download
         if output_file.exists():
