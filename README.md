@@ -38,12 +38,17 @@ Nebula transforms a single "waste" laptop into a private cloud platform for stor
 
 ## Features
 
-- **`nebula ping`** - Server health check
-- **`nebula upload <file>`** - Upload files of any size (WSL-compatible)
-- **`nebula list`** - List all files with metadata
-- **`nebula download <id>`** - Download files with progress bars
-- **`nebula play <id>`** - Stream videos directly to VLC/mpv with seeking support
-- **`nebula status`** - System health dashboard
+- **`nebula ping`** – Server health check
+- **`nebula upload <file>`** – Upload files of any size (WSL-compatible)
+- **`nebula list`** – List all files with metadata
+- **`nebula download <id>`** – Download files with progress bars
+- **`nebula play <id>`** – Stream videos directly to VLC/mpv with seeking support
+- **`nebula play <id> --quality 480`** – Stream transcoded variants at specific quality
+- **`nebula transcode <id>`** – Create 480p/720p/1080p versions in the background
+- **`nebula status`** – System health dashboard
+- **`nebula logs` / `nebula logs api`** – View server/container logs remotely
+- **`nebula restart`** – Restart Nebula services from the CLI
+- **`nebula containers`** – Show Docker container status from the CLI
 
 ---
 
@@ -145,10 +150,23 @@ nebula list --limit 20 --skip 0
 nebula download 67
 nebula download 67 --output ~/Downloads/myfile.mp4
 
-# Stream video
+# Stream video (original)
 nebula play 67
 
-# System health
+# Transcoding (multi-quality)
+nebula transcode 67 -q 480,720,1080
+nebula transcode-status 67 --watch
+
+# Stream specific quality (after transcoding finishes)
+nebula play 67 --quality 480
+
+# Logs and containers
+nebula logs api -n 200
+nebula containers
+
+# Restart services (use carefully)
+nebula restart worker --force
+nebula restart --force
 nebula status
 ```
 
@@ -158,8 +176,15 @@ nebula status
 | `upload <file>` | Upload file | `--description` |
 | `list` | List files | `--limit`, `--skip` |
 | `download <id>` | Download file | `--output`, `-o` |
-| `play <id>` | Stream video | `--player` |
+| `play <id>` | Stream video | `--player`, `--quality` |
+| `transcode <id>` | Create transcoded variants | `--qualities` (`-q`) |
+| `transcode-status <id>` | Show transcoding status | `--watch` |
+| `transcode-jobs` | List transcoding jobs | `--status`, `--limit` |
+| `transcode-cancel <job_id>` | Cancel a transcoding job | - |
 | `status` | System health | `--show-local`, `--show-server` |
+| `logs [service]` | View logs for all or one service | `--lines` (`-n`) |
+| `restart [service]` | Restart one or all services | `--force` (`-f`) |
+| `containers` | Show container status | - |
 
 ---
 
