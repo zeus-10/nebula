@@ -11,6 +11,81 @@ import logging
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+@router.get("/files/{file_id}/download-url")
+async def get_download_url(
+    file_id: int,
+    quality: int = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Get a presigned URL to download directly from MinIO (bypasses API for data path).
+    Optional quality parameter to download a transcoded variant.
+    """
+    file = db.query(File).filter(File.id == file_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    object_key = file.file_path
+    filename = file.filename
+    content_type = file.mime_type
+
+    if quality and file.transcoded_variants:
+        quality_key = str(quality)
+        if quality_key in file.transcoded_variants:
+            object_key = file.transcoded_variants[quality_key]
+            filename = f"{file.filename.rsplit('.', 1)[0]}_{quality}p.{file.filename.rsplit('.', 1)[-1]}" if "." in file.filename else f"{file.filename}_{quality}p"
+            file_info = minio_client.get_file_info(object_key)
+            if file_info and file_info.get("content_type"):
+                content_type = file_info["content_type"]
+
+    try:
+        url = minio_client.get_presigned_get_url(
+            object_name=object_key,
+            download_filename=filename,
+            response_content_type=content_type,
+        )
+        return {"success": True, "url": url}
+    except Exception as e:
+        logger.error(f"Failed to create download url for file_id={file_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create download url: {str(e)}")
+
+
+@router.get("/files/{file_id}/stream-url")
+async def get_stream_url(
+    file_id: int,
+    quality: int = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Get a presigned URL to stream directly from MinIO (supports Range in clients).
+    Optional quality parameter to stream a transcoded variant.
+    """
+    file = db.query(File).filter(File.id == file_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    object_key = file.file_path
+    content_type = file.mime_type
+
+    if quality and file.transcoded_variants:
+        quality_key = str(quality)
+        if quality_key in file.transcoded_variants:
+            object_key = file.transcoded_variants[quality_key]
+            file_info = minio_client.get_file_info(object_key)
+            if file_info and file_info.get("content_type"):
+                content_type = file_info["content_type"]
+
+    try:
+        url = minio_client.get_presigned_get_url(
+            object_name=object_key,
+            download_filename=None,
+            response_content_type=content_type,
+        )
+        return {"success": True, "url": url}
+    except Exception as e:
+        logger.error(f"Failed to create stream url for file_id={file_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create stream url: {str(e)}")
+
 
 @router.get("/files/{file_id}/download")
 async def download_file(

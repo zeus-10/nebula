@@ -95,9 +95,14 @@ def upload_file(
     logger.info(f"[{upload_id}] 🔑 GENERATED S3 KEY - {s3_key}")
 
     # Calculate file hash (optional, for integrity checking)
-    logger.info(f"[{upload_id}] 🔐 CALCULATING FILE HASH...")
-    file_hash = calculate_file_hash(file_obj)
-    logger.info(f"[{upload_id}] ✅ HASH CALCULATED - {file_hash[:16]}...")
+    enable_hash = os.getenv("NEBULA_ENABLE_FILE_HASH", "0").strip().lower() in ("1", "true", "yes", "y")
+    file_hash = None
+    if enable_hash:
+        logger.info(f"[{upload_id}] 🔐 CALCULATING FILE HASH...")
+        file_hash = calculate_file_hash(file_obj)
+        logger.info(f"[{upload_id}] ✅ HASH CALCULATED - {file_hash[:16]}...")
+    else:
+        logger.info(f"[{upload_id}] ⏭️  SKIPPING FILE HASH (NEBULA_ENABLE_FILE_HASH=0)")
 
     # Upload to MinIO
     logger.info(f"[{upload_id}] ☁️  STARTING MINIO UPLOAD...")

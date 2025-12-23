@@ -7,11 +7,119 @@ import mimetypes
 import logging
 
 from app.core.database import get_db
-from app.services.file_service import upload_file
+from pydantic import BaseModel
+
+from app.services.file_service import upload_file, generate_file_key
 from app.models.file import File as FileModel
+from app.core.s3_client import minio_client
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class PresignUploadRequest(BaseModel):
+    filename: str
+    content_type: Optional[str] = None
+    description: Optional[str] = None
+    user_id: Optional[int] = None
+
+
+class PresignUploadResponse(BaseModel):
+    success: bool
+    object_key: str
+    upload_url: str
+
+
+class CompleteUploadRequest(BaseModel):
+    object_key: str
+    filename: str
+    content_type: Optional[str] = None
+    description: Optional[str] = None
+    user_id: Optional[int] = None
+    file_hash: Optional[str] = None
+
+
+@router.post("/upload/presign", response_model=PresignUploadResponse)
+async def presign_upload(
+    body: PresignUploadRequest,
+):
+    """
+    Create a presigned PUT URL to upload directly to MinIO (bypasses API data path).
+    Client must call /api/upload/complete after uploading to register metadata in DB.
+    """
+    if not body.filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    # Basic content-type guess (client may override)
+    content_type = body.content_type
+    if not content_type or content_type == "application/octet-stream":
+        guessed_type, _ = mimetypes.guess_type(body.filename)
+        content_type = guessed_type or "application/octet-stream"
+
+    object_key = generate_file_key(body.filename)
+    try:
+        upload_url = minio_client.get_presigned_put_url(object_name=object_key)
+        return {"success": True, "object_key": object_key, "upload_url": upload_url}
+    except Exception as e:
+        logger.error(f"Failed to presign upload url for {object_key}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create upload url: {str(e)}")
+
+
+@router.post("/upload/complete")
+async def complete_upload(
+    body: CompleteUploadRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    After a client uploads directly to MinIO via presigned URL, register the file in DB.
+    """
+    if not body.object_key or not body.filename:
+        raise HTTPException(status_code=400, detail="object_key and filename are required")
+
+    # Safety: only allow our upload prefix
+    if not body.object_key.startswith("uploads/"):
+        raise HTTPException(status_code=400, detail="Invalid object_key")
+
+    # Verify object exists in MinIO and obtain size/content-type
+    info = minio_client.get_file_info(body.object_key)
+    if not info:
+        raise HTTPException(status_code=404, detail="Uploaded object not found in storage")
+
+    size = int(info["size"])
+    content_type = body.content_type
+    if not content_type or content_type == "application/octet-stream":
+        content_type = info.get("content_type") or (mimetypes.guess_type(body.filename)[0] or "application/octet-stream")
+
+    try:
+        file_record = FileModel(
+            filename=body.filename,
+            file_path=body.object_key,
+            size=size,
+            mime_type=content_type,
+            file_hash=body.file_hash,
+            description=body.description,
+            user_id=body.user_id,
+        )
+        db.add(file_record)
+        db.commit()
+        db.refresh(file_record)
+
+        return {
+            "success": True,
+            "file": {
+                "id": file_record.id,
+                "filename": file_record.filename,
+                "file_path": file_record.file_path,
+                "size": file_record.size,
+                "mime_type": file_record.mime_type,
+                "upload_date": file_record.upload_date.isoformat(),
+                "description": file_record.description,
+                "user_id": file_record.user_id,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Failed to save metadata for {body.object_key}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save file metadata: {str(e)}")
 
 
 @router.post("/upload")
