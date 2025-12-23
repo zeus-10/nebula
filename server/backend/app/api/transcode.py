@@ -279,3 +279,4 @@ def cancel_job(job_id: int, db: Session = Depends(get_db)):
     return {"message": f"Job {job_id} cancelled", "status": "cancelled"}
 
 
+

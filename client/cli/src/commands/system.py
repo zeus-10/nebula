@@ -217,3 +217,4 @@ def show_container_status(server_url: Optional[str] = None):
         console.print(f"[red]Error: {e}[/red]")
 
 
+
