@@ -19,6 +19,8 @@ if config.config_file_name is not None:
 
 # for 'autogenerate' support
 from app.core.database import Base
+# Import all models so Alembic can discover them
+from app.models import File, TranscodingJob  # noqa: F401
 # target_metadata = mymodel.Base.metadata
 target_metadata = Base.metadata
 
