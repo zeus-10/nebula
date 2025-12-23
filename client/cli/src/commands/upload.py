@@ -92,10 +92,22 @@ def upload_file(
 
             # 1) Ask API for presigned PUT URL
             presign_payload = {"filename": filename, "content_type": content_type, "description": description}
+            local_url = os.getenv("NEBULA_LOCAL_URL", "").strip().rstrip("/")
+            remote_url = os.getenv("NEBULA_REMOTE_URL", "").strip().rstrip("/")
+            current = (server_url or "").strip().rstrip("/")
+            network = None
+            if local_url and current == local_url:
+                network = "local"
+            elif remote_url and current == remote_url:
+                network = "remote"
+
+            presign_endpoint = f"{server_url}/api/upload/presign"
+            if network:
+                presign_endpoint = f"{presign_endpoint}?network={network}"
             presign_cmd = [
                 "curl", "-s",
                 "-X", "POST",
-                f"{server_url}/api/upload/presign",
+                presign_endpoint,
                 "-H", "Content-Type: application/json",
                 "-d", json.dumps(presign_payload),
             ]

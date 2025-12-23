@@ -9,6 +9,7 @@ from typing import Optional
 import httpx
 from rich.console import Console
 from rich.progress import Progress, BarColumn, DownloadColumn, TransferSpeedColumn, TimeRemainingColumn
+from urllib.parse import urlparse
 
 console = Console()
 
@@ -82,13 +83,31 @@ def download_file(
             # Prefer presigned download URL (bypass API for data path). Fallback to /download.
             download_url = f"{server_url}/api/files/{file_id}/download"
             try:
+                local_url = os.getenv("NEBULA_LOCAL_URL", "").strip().rstrip("/")
+                remote_url = os.getenv("NEBULA_REMOTE_URL", "").strip().rstrip("/")
+                current = (server_url or "").strip().rstrip("/")
+                network = None
+                if local_url and current == local_url:
+                    network = "local"
+                elif remote_url and current == remote_url:
+                    network = "remote"
+
                 with httpx.Client(timeout=10.0) as client:
-                    presign_resp = client.get(f"{server_url}/api/files/{file_id}/download-url")
+                    presign_url = f"{server_url}/api/files/{file_id}/download-url"
+                    if network:
+                        presign_url = f"{presign_url}?network={network}"
+                    presign_resp = client.get(presign_url)
                     if presign_resp.status_code == 200:
                         presign_data = presign_resp.json()
                         if presign_data.get("success") and presign_data.get("url"):
-                            download_url = presign_data["url"]
-                            console.print("[dim]⚡ Using direct MinIO download (presigned URL)[/dim]")
+                            candidate = presign_data["url"]
+                            host = urlparse(candidate).hostname
+                            # Guardrail: if we accidentally presigned with docker-internal hostname, it won't resolve on clients.
+                            if host and host.lower() in ("s3", "minio"):
+                                pass
+                            else:
+                                download_url = candidate
+                                console.print("[dim]⚡ Using direct MinIO download (presigned URL)[/dim]")
             except Exception:
                 # Silent fallback
                 pass

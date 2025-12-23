@@ -1,6 +1,6 @@
 # Video streaming endpoint - HTTP byte-range requests (206 Partial Content), seeking support
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 async def get_download_url(
     file_id: int,
     quality: int = None,
+    network: str | None = Query(default=None, description="Presign network hint: local|remote|auto"),
     db: Session = Depends(get_db),
 ):
     """
@@ -43,6 +44,7 @@ async def get_download_url(
             object_name=object_key,
             download_filename=filename,
             response_content_type=content_type,
+            network=network,
         )
         return {"success": True, "url": url}
     except Exception as e:
@@ -54,6 +56,7 @@ async def get_download_url(
 async def get_stream_url(
     file_id: int,
     quality: int = None,
+    network: str | None = Query(default=None, description="Presign network hint: local|remote|auto"),
     db: Session = Depends(get_db),
 ):
     """
@@ -80,6 +83,7 @@ async def get_stream_url(
             object_name=object_key,
             download_filename=None,
             response_content_type=content_type,
+            network=network,
         )
         return {"success": True, "url": url}
     except Exception as e:

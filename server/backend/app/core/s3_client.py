@@ -8,6 +8,7 @@ import os
 from datetime import timedelta
 
 import urllib3
+from urllib.parse import urlparse
 from .config import settings
 
 
@@ -48,6 +49,95 @@ class MinIOClient:
         )
         self.bucket_name = settings.s3_bucket
         self._ensure_bucket_exists()
+
+        # Presign clients: presigned URLs must be signed with a hostname that the CLIENT can reach.
+        # We support two public endpoints (local + tailscale/remote) and choose based on a hint.
+        self._presign_clients: Dict[str, Minio] = {}
+
+    @staticmethod
+    def _parse_public_endpoint(url_or_hostport: str) -> tuple[str, bool]:
+        """
+        Accepts either:
+        - full URL: http://1.2.3.4:9000
+        - host:port: 1.2.3.4:9000
+
+        Returns: (endpoint_without_scheme, secure)
+        """
+        raw = (url_or_hostport or "").strip()
+        if not raw:
+            raise ValueError("Empty endpoint")
+
+        if "://" not in raw:
+            return raw, False
+
+        parsed = urlparse(raw)
+        if not parsed.netloc:
+            raise ValueError(f"Invalid endpoint URL: {raw}")
+        secure = parsed.scheme.lower() == "https"
+        return parsed.netloc, secure
+
+    def _get_presign_client(self, network: Optional[str] = None) -> Minio:
+        """
+        network:
+          - "local": sign URLs against S3_PRESIGN_ENDPOINT_LOCAL
+          - "remote": sign URLs against S3_PRESIGN_ENDPOINT_REMOTE
+          - None/"auto": prefer local if set, else remote if set, else internal endpoint
+        """
+        net = (network or "auto").strip().lower()
+        if net not in ("auto", "local", "remote"):
+            net = "auto"
+
+        env_local = os.getenv("S3_PRESIGN_ENDPOINT_LOCAL", "").strip()
+        env_remote = os.getenv("S3_PRESIGN_ENDPOINT_REMOTE", "").strip()
+        env_single = os.getenv("S3_PRESIGN_ENDPOINT", "").strip()
+
+        chosen = ""
+        chosen_key = ""
+
+        if env_single:
+            chosen = env_single
+            chosen_key = "single"
+        elif net == "local" and env_local:
+            chosen = env_local
+            chosen_key = "local"
+        elif net == "remote" and env_remote:
+            chosen = env_remote
+            chosen_key = "remote"
+        else:
+            # auto
+            if env_local:
+                chosen = env_local
+                chosen_key = "local"
+            elif env_remote:
+                chosen = env_remote
+                chosen_key = "remote"
+
+        if not chosen:
+            # Fallback: internal docker hostname (only works inside docker network)
+            chosen_key = "internal"
+            endpoint = settings.s3_endpoint.replace("http://", "").replace("https://", "")
+            secure = False
+        else:
+            endpoint, secure = self._parse_public_endpoint(chosen)
+
+        cache_key = f"{chosen_key}:{endpoint}:{'https' if secure else 'http'}"
+        if cache_key in self._presign_clients:
+            return self._presign_clients[cache_key]
+
+        # Important: set a concrete region to avoid MinIO client doing a bucket-location
+        # network call on presign (which can emit urllib3 MaxRetryError if the public
+        # endpoint isn't reachable from inside Docker).
+        presign_region = os.getenv("S3_PRESIGN_REGION", "us-east-1").strip() or "us-east-1"
+
+        client = Minio(
+            endpoint=endpoint,
+            access_key=settings.s3_access_key,
+            secret_key=settings.s3_secret_key,
+            secure=secure,
+            region=presign_region,
+        )
+        self._presign_clients[cache_key] = client
+        return client
 
     def _ensure_bucket_exists(self) -> None:
         """Create bucket if it doesn't exist"""
@@ -171,6 +261,7 @@ class MinIOClient:
         expires_seconds: Optional[int] = None,
         download_filename: Optional[str] = None,
         response_content_type: Optional[str] = None,
+        network: Optional[str] = None,
     ) -> str:
         """
         Generate a presigned GET URL for direct download/streaming from MinIO.
@@ -189,7 +280,8 @@ class MinIOClient:
             if response_content_type:
                 response_headers["response-content-type"] = response_content_type
 
-            return self.client.presigned_get_object(
+            presign_client = self._get_presign_client(network=network)
+            return presign_client.presigned_get_object(
                 bucket_name=self.bucket_name,
                 object_name=object_name,
                 expires=timedelta(seconds=expires_seconds),
@@ -202,6 +294,7 @@ class MinIOClient:
         self,
         object_name: str,
         expires_seconds: Optional[int] = None,
+        network: Optional[str] = None,
     ) -> str:
         """
         Generate a presigned PUT URL for direct upload to MinIO.
@@ -212,7 +305,8 @@ class MinIOClient:
         """
         try:
             expires_seconds = int(expires_seconds or os.getenv("S3_PRESIGN_EXPIRES_SECONDS", "900"))
-            return self.client.presigned_put_object(
+            presign_client = self._get_presign_client(network=network)
+            return presign_client.presigned_put_object(
                 bucket_name=self.bucket_name,
                 object_name=object_name,
                 expires=timedelta(seconds=expires_seconds),

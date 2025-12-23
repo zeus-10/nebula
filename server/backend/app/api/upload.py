@@ -1,6 +1,6 @@
 # File upload endpoint - handles multipart uploads, streams to MinIO, saves metadata to DB
 
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 import mimetypes
@@ -42,6 +42,7 @@ class CompleteUploadRequest(BaseModel):
 @router.post("/upload/presign", response_model=PresignUploadResponse)
 async def presign_upload(
     body: PresignUploadRequest,
+    network: str | None = Query(default=None, description="Presign network hint: local|remote|auto"),
 ):
     """
     Create a presigned PUT URL to upload directly to MinIO (bypasses API data path).
@@ -58,7 +59,7 @@ async def presign_upload(
 
     object_key = generate_file_key(body.filename)
     try:
-        upload_url = minio_client.get_presigned_put_url(object_name=object_key)
+        upload_url = minio_client.get_presigned_put_url(object_name=object_key, network=network)
         return {"success": True, "object_key": object_key, "upload_url": upload_url}
     except Exception as e:
         logger.error(f"Failed to presign upload url for {object_key}: {e}", exc_info=True)
