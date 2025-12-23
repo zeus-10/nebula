@@ -79,10 +79,24 @@ def download_file(
         console.print(f"[yellow]🚀 Downloading to {output_file.absolute()}...[/yellow]")
 
         try:
+            # Prefer presigned download URL (bypass API for data path). Fallback to /download.
+            download_url = f"{server_url}/api/files/{file_id}/download"
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    presign_resp = client.get(f"{server_url}/api/files/{file_id}/download-url")
+                    if presign_resp.status_code == 200:
+                        presign_data = presign_resp.json()
+                        if presign_data.get("success") and presign_data.get("url"):
+                            download_url = presign_data["url"]
+                            console.print("[dim]⚡ Using direct MinIO download (presigned URL)[/dim]")
+            except Exception:
+                # Silent fallback
+                pass
+
             with httpx.Client(timeout=7200.0) as client:  # 2 hour timeout for large files
                 with client.stream(
                     'GET',
-                    f"{server_url}/api/files/{file_id}/download"
+                    download_url
                 ) as response:
                     response.raise_for_status()
 
@@ -103,7 +117,7 @@ def download_file(
                         # Download and save file
                         with open(download_target, 'wb') as f:
                             downloaded = 0
-                            for chunk in response.iter_bytes(chunk_size=8192):
+                            for chunk in response.iter_bytes(chunk_size=1024 * 1024):
                                 f.write(chunk)
                                 downloaded += len(chunk)
                                 progress.update(task, completed=downloaded)
