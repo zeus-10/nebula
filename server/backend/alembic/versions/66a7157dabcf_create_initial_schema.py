@@ -1,7 +1,7 @@
-"""Create files and jobs tables
+"""Create initial schema with files and transcoding_jobs tables
 
 Revision ID: 66a7157dabcf
-Revises: 1afca1f9e769
+Revises:
 Create Date: 2025-12-23 09:06:59.503799
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '66a7157dabcf'
-down_revision: Union[str, None] = '1afca1f9e769'
+down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
