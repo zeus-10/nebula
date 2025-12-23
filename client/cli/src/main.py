@@ -24,6 +24,7 @@ from .commands.download import download_file
 from .commands.status import show_system_health
 from .commands.play import play_file
 from .commands.transcode import transcode_file, get_transcode_status, list_transcode_jobs, cancel_transcode_job
+from .commands.system import show_logs, restart_service, show_container_status
 
 @app.command()
 def ping():
@@ -145,6 +146,42 @@ def transcode_cancel(
     Cancel a pending or processing transcoding job.
     """
     cancel_transcode_job(job_id)
+
+
+@app.command()
+def logs(
+    service: Optional[str] = typer.Argument(None, help="Service name: api, worker, db, s3, queue (omit for all)"),
+    lines: int = typer.Option(100, "--lines", "-n", help="Number of log lines to fetch")
+):
+    """
+    View server logs.
+
+    Shows logs from Docker containers. Specify a service or omit for all.
+    """
+    show_logs(service=service, lines=lines)
+
+
+@app.command()
+def restart(
+    service: Optional[str] = typer.Argument(None, help="Service name: api, worker, db, s3, queue (omit for all)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation for dangerous operations")
+):
+    """
+    Restart server containers.
+
+    Restart a specific service or all services. Use with caution.
+    """
+    restart_service(service=service, force=force)
+
+
+@app.command()
+def containers():
+    """
+    Show status of all server containers.
+
+    Displays running state of api, worker, db, s3, and queue containers.
+    """
+    show_container_status()
 
 
 # Adding a callback ensures the 'Commands' section is generated

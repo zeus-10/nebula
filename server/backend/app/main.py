@@ -1,7 +1,7 @@
 # FastAPI application entrypoint - initializes app, mounts routers, starts server
 
 from fastapi import FastAPI
-from app.api import ping, upload, files, stream, transcode
+from app.api import ping, upload, files, stream, transcode, system
 import os
 import logging
 
@@ -24,6 +24,7 @@ app.include_router(upload.router, prefix="/api", tags=["files"])
 app.include_router(files.router, prefix="/api", tags=["files"])
 app.include_router(stream.router, prefix="/api", tags=["streaming"])
 app.include_router(transcode.router, prefix="/api", tags=["transcoding"])
+app.include_router(system.router, prefix="/api", tags=["system"])
 
 @app.get("/")
 def read_root():
