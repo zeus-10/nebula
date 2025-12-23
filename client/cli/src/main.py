@@ -86,7 +86,7 @@ def upload(
     """
     Upload a file to Nebula Cloud
     """
-    upload_file(file_path, description=description)
+    upload_file(file_path, server_url=SERVER_URL, description=description)
 
 @app.command()
 def list(
@@ -96,7 +96,7 @@ def list(
     """
     List all uploaded files with metadata
     """
-    list_files(limit=limit, skip=skip)
+    list_files(server_url=SERVER_URL, limit=limit, skip=skip)
 
 @app.command()
 def download(
@@ -108,7 +108,7 @@ def download(
 
     Preserves original filename if no output path is specified.
     """
-    download_file(file_id, output_path)
+    download_file(file_id, output_path, server_url=SERVER_URL)
 
 @app.command()
 def status(
@@ -120,7 +120,7 @@ def status(
 
     Shows CPU, memory, disk usage, network stats, and server health.
     """
-    show_system_health(show_local=show_local, show_server=show_server)
+    show_system_health(show_local=show_local, show_server=show_server, server_url=SERVER_URL)
 
 @app.command()
 def play(
@@ -133,7 +133,7 @@ def play(
 
     Supports seeking. Use --quality to stream a transcoded version.
     """
-    play_file(file_id, player=player, quality=quality)
+    play_file(file_id, player=player, quality=quality, server_url=SERVER_URL)
 
 
 @app.command()
@@ -147,7 +147,7 @@ def transcode(
     Creates 480p and 720p versions by default. Runs in background.
     """
     quality_list = [int(q.strip()) for q in qualities.split(",")]
-    transcode_file(file_id, qualities=quality_list)
+    transcode_file(file_id, qualities=quality_list, server_url=SERVER_URL)
 
 
 @app.command("transcode-status")
@@ -160,7 +160,7 @@ def transcode_status(
 
     Shows progress of all transcoding jobs for the file.
     """
-    get_transcode_status(file_id, watch=watch)
+    get_transcode_status(file_id, watch=watch, server_url=SERVER_URL)
 
 
 @app.command("transcode-jobs")
@@ -173,7 +173,7 @@ def transcode_jobs(
 
     Shows recent transcoding jobs across all files.
     """
-    list_transcode_jobs(status=status, limit=limit)
+    list_transcode_jobs(status=status, limit=limit, server_url=SERVER_URL)
 
 
 @app.command("transcode-cancel")
@@ -183,7 +183,7 @@ def transcode_cancel(
     """
     Cancel a pending or processing transcoding job.
     """
-    cancel_transcode_job(job_id)
+    cancel_transcode_job(job_id, server_url=SERVER_URL)
 
 
 @app.command()
@@ -196,7 +196,7 @@ def logs(
 
     Shows logs from Docker containers. Specify a service or omit for all.
     """
-    show_logs(service=service, lines=lines)
+    show_logs(service=service, lines=lines, server_url=SERVER_URL)
 
 
 @app.command()
@@ -209,7 +209,7 @@ def restart(
 
     Restart a specific service or all services. Use with caution.
     """
-    restart_service(service=service, force=force)
+    restart_service(service=service, force=force, server_url=SERVER_URL)
 
 
 @app.command()
@@ -219,7 +219,7 @@ def containers():
 
     Displays running state of api, worker, db, s3, and queue containers.
     """
-    show_container_status()
+    show_container_status(server_url=SERVER_URL)
 
 
 @app.command()
@@ -236,7 +236,7 @@ def benchmark(
     Tests upload, download, streaming, and transcoding performance.
     Measures throughput, latency, and identifies bottlenecks.
     """
-    run_benchmark(file_path=file_path, server_url=server_url, output=output, verbose=verbose, skip_transcode=skip_transcode)
+    run_benchmark(file_path=file_path, server_url=server_url or SERVER_URL, output=output, verbose=verbose, skip_transcode=skip_transcode)
 
 
 # Adding a callback ensures the 'Commands' section is generated
