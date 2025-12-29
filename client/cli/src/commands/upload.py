@@ -1,17 +1,69 @@
-# Upload command - uploads files to server via curl
+# Upload command - uploads files to server with progress bar
 
 import os
 import typer
 import shutil
 import tempfile
-import subprocess
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Generator
 import mimetypes
+import httpx
 from rich.console import Console
+from rich.progress import Progress, BarColumn, TransferSpeedColumn, TimeRemainingColumn, TaskProgressColumn
 
 console = Console()
+
+
+class ProgressFileReader:
+    """
+    A file-like wrapper that updates a progress bar as data is read.
+    Used for streaming uploads with progress tracking.
+    """
+    def __init__(self, file_path: str, progress: Progress, task_id):
+        self.file_path = file_path
+        self.file = open(file_path, 'rb')
+        self.progress = progress
+        self.task_id = task_id
+        self.file_size = os.path.getsize(file_path)
+        self.bytes_read = 0
+    
+    def read(self, size: int = -1) -> bytes:
+        data = self.file.read(size)
+        if data:
+            self.bytes_read += len(data)
+            self.progress.update(self.task_id, completed=self.bytes_read)
+        return data
+    
+    def seek(self, offset: int, whence: int = 0):
+        return self.file.seek(offset, whence)
+    
+    def tell(self) -> int:
+        return self.file.tell()
+    
+    def close(self):
+        self.file.close()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, *args):
+        self.close()
+
+
+def file_chunk_generator(file_path: str, progress: Progress, task_id, chunk_size: int = 1024 * 1024) -> Generator[bytes, None, None]:
+    """
+    Generator that yields file chunks and updates progress bar.
+    """
+    bytes_sent = 0
+    with open(file_path, 'rb') as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            bytes_sent += len(chunk)
+            progress.update(task_id, completed=bytes_sent)
+            yield chunk
 
 
 def upload_file(
@@ -64,144 +116,50 @@ def upload_file(
 
     # Display upload info
     console.print(f"[blue]📤 Uploading:[/blue] {filename}")
-    console.print(f"[blue]📊 Size:[/blue] {file_size:,} bytes")
+    console.print(f"[blue]📊 Size:[/blue] {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
     if description:
         console.print(f"[blue]📝 Description:[/blue] {description}")
 
     try:
         # Test server connectivity
         console.print(f"[yellow]🔍 Testing server connectivity...[/yellow]")
-        health_result = subprocess.run(
-            ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', f'{server_url}/health'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if health_result.stdout != '200':
-            console.print(f"[red]❌ Server not reachable (status: {health_result.stdout})[/red]")
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                health_response = client.get(f'{server_url}/health')
+                if health_response.status_code != 200:
+                    console.print(f"[red]❌ Server not reachable (status: {health_response.status_code})[/red]")
+                    raise typer.Exit(1)
+            console.print(f"[green]✅ Server is reachable[/green]")
+        except httpx.TimeoutException:
+            console.print(f"[red]❌ Connection timed out connecting to {server_url}/health[/red]")
             raise typer.Exit(1)
-        console.print(f"[green]✅ Server is reachable[/green]")
+        except httpx.ConnectError as e:
+            console.print(f"[red]❌ Cannot connect to server: {e}[/red]")
+            raise typer.Exit(1)
 
         # Optional: direct-to-MinIO upload via presigned URL (bypasses API data path)
         use_direct = os.getenv("NEBULA_DIRECT_S3", "0").strip().lower() in ("1", "true", "yes", "y")
         if use_direct:
-            guessed_type, _ = mimetypes.guess_type(filename)
-            content_type = guessed_type or "application/octet-stream"
+            _upload_direct_s3(
+                actual_upload_path=actual_upload_path,
+                filename=filename,
+                file_size=file_size,
+                server_url=server_url,
+                description=description
+            )
+        else:
+            _upload_via_api(
+                actual_upload_path=actual_upload_path,
+                filename=filename,
+                file_size=file_size,
+                server_url=server_url,
+                description=description
+            )
 
-            console.print("[dim]⚡ Using direct MinIO upload (presigned URL)[/dim]")
-
-            # 1) Ask API for presigned PUT URL
-            presign_payload = {"filename": filename, "content_type": content_type, "description": description}
-            local_url = os.getenv("NEBULA_LOCAL_URL", "").strip().rstrip("/")
-            remote_url = os.getenv("NEBULA_REMOTE_URL", "").strip().rstrip("/")
-            current = (server_url or "").strip().rstrip("/")
-            network = None
-            if local_url and current == local_url:
-                network = "local"
-            elif remote_url and current == remote_url:
-                network = "remote"
-
-            presign_endpoint = f"{server_url}/api/upload/presign"
-            if network:
-                presign_endpoint = f"{presign_endpoint}?network={network}"
-            presign_cmd = [
-                "curl", "-s",
-                "-X", "POST",
-                presign_endpoint,
-                "-H", "Content-Type: application/json",
-                "-d", json.dumps(presign_payload),
-            ]
-            presign_result = subprocess.run(presign_cmd, capture_output=True, text=True, timeout=30)
-            if presign_result.returncode != 0:
-                console.print(f"[red]❌ Presign failed: {presign_result.stderr}[/red]")
-                raise typer.Exit(1)
-            presign_data = json.loads(presign_result.stdout)
-            if not presign_data.get("success") or not presign_data.get("upload_url") or not presign_data.get("object_key"):
-                console.print(f"[red]❌ Presign returned invalid response: {presign_result.stdout}[/red]")
-                raise typer.Exit(1)
-
-            upload_url = presign_data["upload_url"]
-            object_key = presign_data["object_key"]
-
-            # 2) Upload file directly to MinIO via presigned PUT
-            put_cmd = [
-                "curl", "-s",
-                "-X", "PUT",
-                "-H", f"Content-Type: {content_type}",
-                "--upload-file", actual_upload_path,
-                upload_url,
-            ]
-            put_result = subprocess.run(put_cmd, capture_output=True, text=True, timeout=3600)
-            if put_result.returncode != 0:
-                console.print(f"[red]❌ Direct upload failed: {put_result.stderr}[/red]")
-                raise typer.Exit(1)
-
-            # 3) Register metadata in DB
-            complete_payload = {
-                "object_key": object_key,
-                "filename": filename,
-                "content_type": content_type,
-                "description": description,
-            }
-            complete_cmd = [
-                "curl", "-s",
-                "-X", "POST",
-                f"{server_url}/api/upload/complete",
-                "-H", "Content-Type: application/json",
-                "-d", json.dumps(complete_payload),
-            ]
-            complete_result = subprocess.run(complete_cmd, capture_output=True, text=True, timeout=30)
-            if complete_result.returncode != 0:
-                console.print(f"[red]❌ Complete failed: {complete_result.stderr}[/red]")
-                raise typer.Exit(1)
-            result = json.loads(complete_result.stdout)
-            if not result.get("success") or not result.get("file"):
-                console.print(f"[red]❌ Complete returned invalid response: {complete_result.stdout}[/red]")
-                raise typer.Exit(1)
-
-            file_info = result["file"]
-            console.print(f"[green]✅ Upload successful![/green]")
-            console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
-            console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
-            console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
-            return
-
-        # Build curl command
-        console.print(f"[yellow]📡 Uploading {file_size:,} bytes...[/yellow]")
-        curl_cmd = [
-            'curl', '--no-buffer', '-s',
-            '-X', 'POST',
-            f'{server_url}/api/upload',
-            '-F', f'file=@{actual_upload_path};filename={filename}',
-        ]
-        
-        if description:
-            curl_cmd.extend(['-F', f'description={description}'])
-        
-        # Run curl and capture output
-        curl_result = subprocess.run(
-            curl_cmd,
-            capture_output=True,
-            text=True,
-            timeout=600  # 10 minute timeout
-        )
-        
-        if curl_result.returncode != 0:
-            console.print(f"[red]❌ Upload failed: {curl_result.stderr}[/red]")
-            raise typer.Exit(1)
-        
-        # Parse JSON response
-        result = json.loads(curl_result.stdout)
-
-        # Display success
-        file_info = result['file']
-        console.print(f"[green]✅ Upload successful![/green]")
-        console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
-        console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
-        console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
-
-    except subprocess.TimeoutExpired:
-        console.print("[red]❌ Upload timeout (10 minutes exceeded)[/red]")
+    except typer.Exit:
+        raise
+    except httpx.TimeoutException:
+        console.print("[red]❌ Upload timeout[/red]")
         raise typer.Exit(1)
     except json.JSONDecodeError:
         console.print(f"[red]❌ Server returned invalid response[/red]")
@@ -216,3 +174,173 @@ def upload_file(
                 os.remove(temp_file_path)
             except Exception:
                 pass
+
+
+def _upload_direct_s3(
+    actual_upload_path: str,
+    filename: str,
+    file_size: int,
+    server_url: str,
+    description: Optional[str] = None
+):
+    """Upload directly to MinIO via presigned URL with progress bar."""
+    guessed_type, _ = mimetypes.guess_type(filename)
+    content_type = guessed_type or "application/octet-stream"
+
+    console.print("[dim]⚡ Using direct MinIO upload (presigned URL)[/dim]")
+
+    # Determine network hint
+    local_url = os.getenv("NEBULA_LOCAL_URL", "").strip().rstrip("/")
+    remote_url = os.getenv("NEBULA_REMOTE_URL", "").strip().rstrip("/")
+    current = (server_url or "").strip().rstrip("/")
+    network = None
+    if local_url and current == local_url:
+        network = "local"
+    elif remote_url and current == remote_url:
+        network = "remote"
+
+    # 1) Ask API for presigned PUT URL
+    presign_payload = {"filename": filename, "content_type": content_type, "description": description}
+    presign_endpoint = f"{server_url}/api/upload/presign"
+    if network:
+        presign_endpoint = f"{presign_endpoint}?network={network}"
+
+    with httpx.Client(timeout=30.0) as client:
+        presign_response = client.post(
+            presign_endpoint,
+            json=presign_payload
+        )
+        presign_response.raise_for_status()
+        presign_data = presign_response.json()
+
+    if not presign_data.get("success") or not presign_data.get("upload_url") or not presign_data.get("object_key"):
+        console.print(f"[red]❌ Presign returned invalid response[/red]")
+        raise typer.Exit(1)
+
+    upload_url = presign_data["upload_url"]
+    object_key = presign_data["object_key"]
+
+    # 2) Upload file directly to MinIO via presigned PUT with progress bar
+    with Progress(
+        BarColumn(),
+        TaskProgressColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("[cyan]Uploading...", total=file_size)
+        
+        # Use chunked upload with progress tracking
+        def upload_generator():
+            bytes_sent = 0
+            with open(actual_upload_path, 'rb') as f:
+                while True:
+                    chunk = f.read(1024 * 1024)  # 1MB chunks
+                    if not chunk:
+                        break
+                    bytes_sent += len(chunk)
+                    progress.update(task, completed=bytes_sent)
+                    yield chunk
+
+        # Use a longer timeout for large file uploads (1 hour)
+        with httpx.Client(timeout=httpx.Timeout(3600.0, connect=30.0)) as client:
+            put_response = client.put(
+                upload_url,
+                content=upload_generator(),
+                headers={
+                    "Content-Type": content_type,
+                    "Content-Length": str(file_size),
+                }
+            )
+            
+            if put_response.status_code not in (200, 201, 204):
+                console.print(f"[red]❌ Direct upload failed: {put_response.status_code}[/red]")
+                raise typer.Exit(1)
+
+    # 3) Register metadata in DB
+    complete_payload = {
+        "object_key": object_key,
+        "filename": filename,
+        "content_type": content_type,
+        "description": description,
+    }
+    
+    with httpx.Client(timeout=30.0) as client:
+        complete_response = client.post(
+            f"{server_url}/api/upload/complete",
+            json=complete_payload
+        )
+        complete_response.raise_for_status()
+        result = complete_response.json()
+
+    if not result.get("success") or not result.get("file"):
+        console.print(f"[red]❌ Complete returned invalid response[/red]")
+        raise typer.Exit(1)
+
+    file_info = result["file"]
+    console.print(f"[green]✅ Upload successful![/green]")
+    console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
+    console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
+    console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
+
+
+def _upload_via_api(
+    actual_upload_path: str,
+    filename: str,
+    file_size: int,
+    server_url: str,
+    description: Optional[str] = None
+):
+    """Upload via API endpoint with progress bar."""
+    
+    # For multipart uploads, we need to track progress differently
+    # We'll read the file in chunks and track as we build the request
+    with Progress(
+        BarColumn(),
+        TaskProgressColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("[cyan]Uploading...", total=file_size)
+        
+        # Read file content with progress tracking
+        # For multipart, we need to read the whole file but track progress
+        file_content = bytearray()
+        bytes_read = 0
+        
+        with open(actual_upload_path, 'rb') as f:
+            while True:
+                chunk = f.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                file_content.extend(chunk)
+                bytes_read += len(chunk)
+                progress.update(task, completed=bytes_read)
+        
+        # Now send the multipart form
+        progress.update(task, description="[cyan]Sending to server...")
+        
+        files = {
+            'file': (filename, bytes(file_content), 'application/octet-stream')
+        }
+        data = {}
+        if description:
+            data['description'] = description
+        
+        # Use a longer timeout for large file uploads (10 minutes)
+        with httpx.Client(timeout=httpx.Timeout(600.0, connect=30.0)) as client:
+            response = client.post(
+                f'{server_url}/api/upload',
+                files=files,
+                data=data if data else None
+            )
+            response.raise_for_status()
+            result = response.json()
+
+    # Display success
+    file_info = result['file']
+    console.print(f"[green]✅ Upload successful![/green]")
+    console.print(f"[green]📄 File ID:[/green] {file_info['id']}")
+    console.print(f"[green]📁 Path:[/green] {file_info['file_path']}")
+    console.print(f"[green]🕒 Uploaded:[/green] {file_info['upload_date']}")
